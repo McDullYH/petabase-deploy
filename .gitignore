@@ -2,3 +2,7 @@ TODO
 order
 selinux_config.bak
 ssh_config
+slaves
+test.sh
+test_getopt.sh
+haproxy.cfg

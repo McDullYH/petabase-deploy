@@ -10,102 +10,19 @@ fi
 
 
 
-NAMENODE_FILE_LIST="nn_fl"
-DATANODE_FILE_LIST="dn_fl"
-SECNAMENODE_FILE_LIST="snn_fl"
-COMMON_FILE_LIST="common_fl"
-EXT_FILE_LIST="ext_fl"
-NESS_FILE_LIST="ness_fl"
-MYSQL_FILE_LIST="mysql_fl"
-
 #if [ -e "./ssh_config" ];then
 #  SSH_ARGS="-F ./ssh_config"
 #fi
-
-# change to esensoft-petabase dir
-SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
-ESEN_DIR=${SCRIPT_DIR}
-ESEN_PETA=${ESEN_DIR%/*}
-NAMENODE_SOFT_DIR=$ESEN_PETA/namenode-software
-DATANODE_SOFT_DIR=$ESEN_PETA/datanode-software
-SEC_NAMENODE_SOFT_DIR=$ESEN_PETA/sec-namenode-software
-COMMON_SOFT_DIR=$ESEN_PETA/common-software
-NESS_SOFT_DIR=$ESEN_PETA/ness-software
-EXT_SOFT_DIR=$ESEN_PETA/ext-software
-MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
 
 # import temp variable
 source ./deploy_config.sh
 
 
-hostlist=()
+CHECK=false
+HELP=false
+FILE=""
+hostlist=""
 secondnode=""
-
-
-usage(){
-  cat <<EOF
-  usage $0:[-n|-s|-?] [optional args]
-  -n   petabase slaves hostname list
-  -s   secondarynamenode hostname
-  -?   help message
-  
-  e.g. $0 -n esen-petabase-234,esen-petabase-235 -s esen-petabase-234
-EOF
-exit 1
-}
-
-while getopts "n:s:?:" options;do
-  case $options in
-    n ) IFS=',' hostlist=($OPTARG);;
-    s ) secondnode="$OPTARG";;
-    \? ) usage;;
-    * ) usage;;
-  esac
-done;
-
-# use MD5 to check the file will be more simple and better
-check_file()
-{
-#  if [-f $NAMENODE_FILE_LIST ];then
-#    while read LINE
-#    do
-#      if [-f $NAMENODE_SOFT_DIR/$LINE ];then
-#        echo "$LINE exists"
-#      else
-#        echo "$LINE not exist"
-#      fi
-#    done  < $NAMENODE_FILE_LIST
-#  else
-#    echo "$NAMENODE_FILE_LIST 不存在，无法验证文件完整性"
-#  fi
-#  if [-f $DATANODE_FILE_LIST ];then
-#    while read LINE
-#    do
-#      if [-f $DATANODE_SOFT_DIR/$LINE ];then
-#        echo "$LINE exists"
-#      else
-#        echo "$LINE not exist"
-#      fi
-#    done  < $DATANODE_FILE_LIST
-#  else
-#    echo "$DATANODE_FILE_LIST 不存在，无法验证文件完整性"
-#  fi
-#  if [-f $SECNAMENODE_FILE_LIST ];then
-#    while read LINE
-#    do
-#      if [-f $SEC_NAMENODE_DIR/$LINE ];then
-#        echo "$LINE exists"
-#      else
-#        echo "$LINE not exist"
-#      fi
-#    done  < $SECNAMENODE_FILE_LIST
-#  else
-#    echo "$SECNAMENODE_FILE_LIST 不存在，无法验证文件完整性"
-#  fi
-#  return 1
-return 1;
-}
-
 
 
 copy_esen_software()
@@ -149,7 +66,7 @@ install_necessary_soft_namenode()
   for rpm_file in $NESS_SOFT_DIR/*.rpm
     do
     check_and_install_local $rpm_file
-    if [ $? -ne 0];then
+    if [ $? -ne 0 ];then
       return 1
     fi
   done
@@ -164,7 +81,7 @@ install_necessary_soft_datanodes()
   for rpm_file in $NESS_SOFT_DIR/*.rpm
     do
     check_and_install_remote $host $rpm_file
-    if [ $? -ne 0];then
+    if [ $? -ne 0 ];then
       return 1
     fi
     done
@@ -241,8 +158,9 @@ install_mysql()
         eecho "无法安装 $mysql-community-server to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
 
+  echo "你可以运行 rpm -qa  | grep -ri mysql 来查看mysql的安装情况"
+  echo "然后使用 rpm -e [mysql_package_name] 来卸载响应的包"
 }
-
 
 
 configure_mysql()
@@ -283,11 +201,16 @@ uninstall_mysql()
 }
 
 
-#TODO 目前仅仅禁用本机的防火墙和selinux,没有问题，若发现问题，再来定位
+# 201504xx TODO 目前仅仅禁用本机的防火墙和selinux,没有问题，若发现问题，再来定位
+# 20150423  每个host的iptables必须关闭
 configure_iptables()
 {
   service iptables stop;
   chkconfig iptables off;
+for host in ${hostlist[@]}; do
+  ssh $host "service iptables stop"
+  ssh $host "chkconfig iptables off"
+done
 }
 
 
@@ -297,51 +220,199 @@ configure_selinux()
   setenforce 0
 }
 
+
+check_depends_and_conflict()
+{
+  check_install_local redhat-lsb
+
+  for host in ${hostlist[@]}; do
+    check_install_remote redhat-lsb
+  done
+}
+
+check_install_redhat-lsb()
+{
+  check_install_local redhat-lsb
+  if [ $? = 1 ];then
+    wecho "必须为本机安装redhat-lsb"
+    wecho "请运行yum install -y redhat-lsb后再次执行本预安装脚本"
+    exit 1
+  fi
+
+  for host in ${hostlist[@]}; do
+    check_install_remote $host redhat-lsb
+    if [ $? = 1 ];then
+      wecho "必须为$host安装redhat-lsb"
+      wecho "请为$host运行yum install -y redhat-lsb后再次执行本预安装脚本"
+      exit 1
+    fi
+  done
+}
+
+
+
 #############################################################################
 
-if [ $hostlist ]; then
-  echo "`date +%Y-%m-%d-%T`开始预安装"
+# first analsyse argument
+TEMP=`getopt -o n:s:f:chz:: -l nodes:,secondary-namenode:,nodes-file:,check,help,z-long \
+     -n '错误的输入参数' -- "$@" `
 
-  #echo "检查文件完整性"
-  #check_file
+if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
 
-  iecho "配置SSH"
-  ssh_auth
+eval set -- "$TEMP"
 
-  iecho "正在拷贝组件到其他节点"
-  copy_esen_software
+arg_check()
+{
 
-  iecho "安装必要软件"
-  install_necessary_soft_namenode
-  if [ $? -ne 0];then
-   eecho "主机上安装必要软件失败，退出"
-   return 1
+  if [[ -z "${hostlist}" ]];then
+    wecho "请指定从机列表"
+    return 1
   fi
 
-  install_necessary_soft_datanodes
-  if [ $? -ne 0];then
-   eecho "从机上安装必要软件失败，退出"
-   return 1
+  if [ -z "${secondnode}" ];then
+    wecho "请指定第二主机"
+    return 1
   fi
 
-  iecho "安装mysql server"
-  install_mysql
+  #secondnode 必须在nodes中
+  in=False
+  for host in ${hostlist[@]}; do
+    if [ ${host} = ${secondnode} ];then
+      in=True
+      return 0
+    fi
+  done
+  if [ ${in}x = "False"x ];then
+    wecho "第二主机必须是在从机列表中"
+    return 1
+  fi
+}
 
-  iecho "配置mysql"
-  configure_mysql
+show_operate()
+{
+  iecho "从机列表:	${hostlist}"
+  iecho "第二主机:	${secondnode}"
 
-  iecho "禁止iptables 启动"
-  configure_iptables
+  iecho "输入 'YES' 将继续操作"
+  read  TOGO
+  if [ ${TOGO}x = "YES"x ];then
+    return 0;
+  else
+    iecho "操作取消"
+    return 1;
+  fi
 
-  iecho "禁止selinux 启动"
-  configure_selinux
+}
 
-  # for test script never use
-  # uninstall_mysql
-  ## uninstall_necessary_soft_namenode
-  ## uninstall_necessary_soft_datanodes
 
-  iecho "`date +%Y-%m-%d-%T` 完成"
-else
-  iecho "未输入datanode或者second-namenode"
+while true ; do
+  case "$1" in
+# c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
+     -n|--nodes) 
+       IFS=','; hostlist=$2;
+       #echo "Option $1's argument is $hostlist"; 
+       shift 2 ;;
+
+     -s|--secondary-namenode) 
+       secondnode=$2;
+       #echo "Option $1's argument is $secondnode"; 
+       shift 2 ;;
+
+     -f|--nodes-file) 
+       FILE=$2;
+       #echo "Option $1's argument is $FILE"; 
+       if [ ! -r $FILE ];then
+         wecho "文件 ${FILE} 不存在或者不可读"
+	 exit 1
+       fi
+       while read LINE
+       do
+	 if [ ${LINE}x = "second-name-node:"x ];then
+	 read LINE
+	 secondnode=$LINE
+	 fi
+	 if [ ${LINE}x = "datanode:"x ];then
+	 read LINE
+         IFS=','; hostlist=$LINE;
+	 fi
+	 done  <${FILE}
+       shift 2 ;;
+
+     -c|--check) 
+       $CHECK=true; 
+       echo "Option $1's argument is $CHECK" ; 
+       shift ;;
+
+     -h|--help)  
+       $HELP=true;  
+       echo "Option $1's argument is $HELP" ; 
+       shift ;;
+
+ #z has an optional argument. As we are in quoted mode,
+ #an empty parameter will be generated if its optional
+ #argument is not found.
+       -z|--z-long)
+       case "$2" in
+       "") echo "Option $1, no argument"; shift 2 ;;
+       *)  echo "Option $1's argument is $2" ; shift 2 ;;
+       esac ;;
+     --) shift ; break ;;
+     *) echo "Internal error!" ; exit 1 ;;
+  esac
+done
+
+#echo "Remaining arguments:"
+#for arg do
+# echo '--> ' "$arg" ;
+#done
+
+
+
+arg_check
+if [ $? = 1 ];then
+  exit 1
 fi
+
+
+echo "`date +%Y-%m-%d-%T`开始预安装"
+
+#echo "检查文件完整性"
+#check_file
+
+iecho "配置SSH"
+ssh_auth
+
+check_install_redhat-lsb
+
+iecho "正在拷贝组件到其他节点"
+copy_esen_software
+
+iecho "安装必要软件"
+install_necessary_soft_namenode
+if [ $? -ne 0 ];then
+ eecho "主机上安装必要软件失败，退出"
+fi
+
+install_necessary_soft_datanodes
+if [ $? -ne 0 ];then
+ eecho "从机上安装必要软件失败，退出"
+fi
+
+iecho "安装mysql server"
+install_mysql
+
+iecho "配置mysql"
+configure_mysql
+
+iecho "禁止iptables 启动"
+configure_iptables
+
+iecho "禁止selinux 启动"
+configure_selinux
+
+# for test script never use
+# uninstall_mysql
+## uninstall_necessary_soft_namenode
+## uninstall_necessary_soft_datanodes
+
+iecho "`date +%Y-%m-%d-%T` 完成"

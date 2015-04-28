@@ -1,0 +1,6 @@
+
+#如果用petabase-shell连接，则使用25004端口，在petabase-shell里面执行 connect proxy_server:25004
+listen petabase_shell :25004
+mode tcp
+option tcplog
+balance leastconn

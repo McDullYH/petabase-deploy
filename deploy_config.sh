@@ -4,19 +4,101 @@
 # 使用alias简化命令  注意引号，一般都是单引号
 
 
-java_main=/usr/java
-java_name=jdk1.7.0_45
-java_dir=$java_main/$java_name
+#java_main=/usr/java
+#java_name=jdk1.7.0_45
+#java_dir=$java_main/$java_name
+# 最后必须没有斜杠 '/'
+java_dir=/usr/java/default
 
 PETA_USER="petabase"
 PETA_GRP="petabase"
 MASTER_HOST="`hostname`"
 
-zoo_version="3.4.5+cdh5.3.0+81-1.cdh5.3.0.p0.36.el6.x86_64"
-cdh_version="2.5.0+cdh5.3.0+781-1.cdh5.3.0.p0.54.el6.x86_64"
-hive_version="0.13.1+cdh5.3.0+306-1.cdh5.3.0.p0.29.el6.noarch"
-hbase_version="hbase-0.98.6+cdh5.3.0+73-1.cdh5.3.0.p0.25.el6.x86_64"
-peta_version="2.1.0+cdh5.3.0-el6.x86_64"
+
+real_usr="`whoami`"
+check_usr="root"
+if [ "${real_usr}" != "${check_usr}" ]; then
+  echo "The user must be $check_usr"
+  exit 0
+fi
+
+# no need
+#NAMENODE_FILE_LIST="nn_fl"
+#DATANODE_FILE_LIST="dn_fl"
+#SECNAMENODE_FILE_LIST="snn_fl"
+#COMMON_FILE_LIST="common_fl"
+#EXT_FILE_LIST="ext_fl"
+#NESS_FILE_LIST="ness_fl"
+#MYSQL_FILE_LIST="mysql_fl"
+
+# use MD5 to check the file will be more simple and better
+#check_file()
+#{
+#  if [-f $NAMENODE_FILE_LIST ];then
+#    while read LINE
+#    do
+#      if [-f $NAMENODE_SOFT_DIR/$LINE ];then
+#        echo "$LINE exists"
+#      else
+#        echo "$LINE not exist"
+#      fi
+#    done  < $NAMENODE_FILE_LIST
+#  else
+#    echo "$NAMENODE_FILE_LIST 不存在，无法验证文件完整性"
+#  fi
+#  if [-f $DATANODE_FILE_LIST ];then
+#    while read LINE
+#    do
+#      if [-f $DATANODE_SOFT_DIR/$LINE ];then
+#        echo "$LINE exists"
+#      else
+#        echo "$LINE not exist"
+#      fi
+#    done  < $DATANODE_FILE_LIST
+#  else
+#    echo "$DATANODE_FILE_LIST 不存在，无法验证文件完整性"
+#  fi
+#  if [-f $SECNAMENODE_FILE_LIST ];then
+#    while read LINE
+#    do
+#      if [-f $SEC_NAMENODE_DIR/$LINE ];then
+#        echo "$LINE exists"
+#      else
+#        echo "$LINE not exist"
+#      fi
+#    done  < $SECNAMENODE_FILE_LIST
+#  else
+#    echo "$SECNAMENODE_FILE_LIST 不存在，无法验证文件完整性"
+#  fi
+#  return 1
+#return 1;
+#}
+
+
+#if [ -e "./ssh_config" ];then
+#  SSH_ARGS="-F ./ssh_config"
+#fi
+
+# change to esensoft-petabase dir
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+ESEN_DIR=${SCRIPT_DIR}
+ESEN_PETA=${ESEN_DIR%/*}
+NAMENODE_SOFT_DIR=$ESEN_PETA/namenode-software
+DATANODE_SOFT_DIR=$ESEN_PETA/datanode-software
+SEC_NAMENODE_SOFT_DIR=$ESEN_PETA/sec-namenode-software
+COMMON_SOFT_DIR=$ESEN_PETA/common-software
+NESS_SOFT_DIR=$ESEN_PETA/ness-software
+EXT_SOFT_DIR=$ESEN_PETA/ext-software
+MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
+
+
+# 必要的依赖软件比较特殊，
+# 特殊1:jdk，在使用rpm -q 查找的时候不能带版本号查找，导致即使安装了却(使用带版本号的命令)检查不到，而安装却会失败
+# 特殊2:openssl，CentOS yum update之后安装了更新的openssl，估计以后会有更新的，所以查找的时候也不应该带版本号
+# 所以，在这里使用软件列表名的方式来判断软件的安装情况
+
+NESS_SOFT="nc,jdk,setup,openssl"
+
 
 
 eecho()
@@ -28,6 +110,19 @@ iecho()
 {
   echo -e  "\033[0;32;1m$@ \033[0m"
 }
+
+wecho()
+{
+  echo -e  "\033[0;33;1m$@ \033[0m"
+}
+
+# may no need
+report_failure_and_exit()
+{
+ echo "${1}"
+ exit 0
+}
+
 
 install_soft_local()
 {
@@ -73,14 +168,16 @@ uninstall_soft_remote()
 }
 
 
+
+# 0 for installed and 1 for not install
 check_install_local()
 {
   if [ $# -ne 1 ] ; then
     echo "必须为 install_soft_local 指定一个参数"
-    return 1
+    return -1
   fi
   echo "正在检查${1}的安装情况"
-  rpm -q ${1}
+  rpm -q ${1} 1>/dev/null 2>&1
 }
 
 
@@ -88,8 +185,8 @@ check_install_local()
 check_install_remote()
 {
   if [ $# -ne 2 ] ; then
-    echo "必须为 install_soft_remote 指定2个参数"
-    return 1
+    echo "必须为 check_install_remote 指定2个参数"
+    return -1
   fi
   echo "正在检查${1}上${2}的安装情况"
   ssh ${1} rpm -q ${2}   1>/dev/null  2>&1
