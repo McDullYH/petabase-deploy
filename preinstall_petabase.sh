@@ -89,6 +89,74 @@ install_necessary_soft_datanodes()
 
 }
 
+check_and_install_necessary_namenode_from_rpm_list()
+{
+  for key in ${!NESS_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`rpm -q ${key}`
+      pkgname=`basename ${NESS_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
+	rpm -U   ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
+	if [ $? == 0 ];then
+	  iecho "本机的${key}版本更新，无需升级"
+	else
+	  echo "升级本机${key}成功"
+	fi
+      fi
+     else
+      install_soft_local ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        return 1
+      fi
+    fi
+  done
+
+  return 0
+}
+
+check_and_install_necessary_datanode_from_rpm_list()
+{
+
+ for host in ${hostlist[@]}; do
+  for key in ${!NESS_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      pkgname=`basename ${NESS_SOFT_DICT[${key}]} .rpm`
+      echo ${installed_pkg_name}
+      echo ${pkgname}
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
+	ssh ${host} "rpm -U   ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]} 2>&1 |grep 'which is newer' 1>/dev/null 2>&1"
+	if [ $? == 0 ];then
+	  iecho "${host}的${key}版本更新，无需升级"
+	else
+	  echo "升级${host}的${key}成功"
+	fi
+      fi
+      else
+      install_soft_remote ${host} ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        return 1
+      fi
+    fi
+  done
+ done
+ return 0
+}
+
+
+
+
+
 uninstall_necessary_soft_namenode()
 {
   for rpm_file in $NESS_SOFT_DIR/*.rpm
@@ -158,8 +226,6 @@ install_mysql()
         eecho "无法安装 $mysql-community-server to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
 
-  echo "你可以运行 rpm -qa  | grep -ri mysql 来查看mysql的安装情况"
-  echo "然后使用 rpm -e [mysql_package_name] 来卸载响应的包"
 }
 
 
@@ -197,6 +263,7 @@ uninstall_mysql()
         eecho "Unable to uninstall mysql-community-perl-DBI to $MASTER_HOST"
       fi
 
+  rm -rf /var/lib/mysql
   rm -f /etc/my.cnf
 }
 
@@ -221,15 +288,6 @@ configure_selinux()
 }
 
 
-check_depends_and_conflict()
-{
-  check_install_local redhat-lsb
-
-  for host in ${hostlist[@]}; do
-    check_install_remote redhat-lsb
-  done
-}
-
 check_install_redhat-lsb()
 {
   check_install_local redhat-lsb
@@ -249,6 +307,18 @@ check_install_redhat-lsb()
   done
 }
 
+check_install_mysql()
+{
+  rpm -qa |grep -i mysql 1>/dev/null 2>&1
+  if [ $? = 0 ];then
+    wecho "本机存在已经安装的mysql，请在备份数据后删除，然后再运行本预安装程序"
+    echo "您可以使用 'rpm -qa |grep -i mysql' 来查找已经安装的mysql包"
+    echo "并使用rpm -e <package_name> 来卸载该包"
+    exit 1
+  else
+    return 0
+  fi
+}
 
 
 #############################################################################
@@ -379,23 +449,29 @@ echo "`date +%Y-%m-%d-%T`开始预安装"
 #echo "检查文件完整性"
 #check_file
 
-iecho "配置SSH"
-ssh_auth
+#iecho "配置SSH"
+#ssh_auth
 
 check_install_redhat-lsb
+check_install_mysql
 
 iecho "正在拷贝组件到其他节点"
 copy_esen_software
 
 iecho "安装必要软件"
-install_necessary_soft_namenode
+check_and_install_necessary_namenode_from_rpm_list
+#install_necessary_soft_namenode
 if [ $? -ne 0 ];then
  eecho "主机上安装必要软件失败，退出"
+ exit 1
 fi
 
-install_necessary_soft_datanodes
+
+check_and_install_necessary_datanode_from_rpm_list
+#install_necessary_soft_datanodes
 if [ $? -ne 0 ];then
  eecho "从机上安装必要软件失败，退出"
+ exit 1
 fi
 
 iecho "安装mysql server"
@@ -410,9 +486,9 @@ configure_iptables
 iecho "禁止selinux 启动"
 configure_selinux
 
-# for test script never use
-# uninstall_mysql
-## uninstall_necessary_soft_namenode
-## uninstall_necessary_soft_datanodes
+ #for test script never use
+ #uninstall_mysql
+ #uninstall_necessary_soft_namenode
+ #uninstall_necessary_soft_datanodes
 
 iecho "`date +%Y-%m-%d-%T` 完成"

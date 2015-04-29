@@ -97,7 +97,75 @@ MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
 # 特殊2:openssl，CentOS yum update之后安装了更新的openssl，估计以后会有更新的，所以查找的时候也不应该带版本号
 # 所以，在这里使用软件列表名的方式来判断软件的安装情况
 
-NESS_SOFT="nc,jdk,setup,openssl"
+declare -A COMMON_SOFT_DICT
+declare -A NAMENODE_SOFT_DICT
+declare -A DATANODE_SOFT_DICT
+declare -A SEC_NAMENODE_SOFT_DICT
+declare -A NESS_SOFT_DICT
+declare -A EXT_SOFT_DICT
+declare -A MYSQL_SOFT_DICT
+
+
+
+
+construct_soft_dict()
+{
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  COMMON_SOFT_DICT[${key}]=$LINE
+  done < $COMMON_SOFT_DIR/rpm.list
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  NESS_SOFT_DICT[${key}]=$LINE
+  done < $NESS_SOFT_DIR/rpm.list
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  NAMENODE_SOFT_DICT[${key}]=$LINE
+  done < $NAMENODE_SOFT_DIR/rpm.list
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  DATANODE_SOFT_DICT[${key}]=$LINE
+  done < $DATANODE_SOFT_DIR/rpm.list
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  SEC_NAMENODE_SOFT_DICT[${key}]=$LINE
+  done < $SEC_NAMENODE_SOFT_DIR/rpm.list
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  EXT_SOFT_DICT[${key}]=$LINE
+  done < $EXT_SOFT_DIR/rpm.list
+}
+
+
+# this is just for test
+show_soft_dict()
+{
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    echo "key is ${key} and value is ${COMMON_SOFT_DICT[${key}]}"
+  done
+
+  for key in ${!NESS_SOFT_DICT[@]};do
+    echo "key is ${key} and value is ${NESS_SOFT_DICT[${key}]}"
+  done
+}
 
 
 
@@ -154,7 +222,6 @@ uninstall_soft_local()
   fi
   echo "正在卸载${1} ..."
   rpm -e --nodeps ${1}
-  # -Uvh is better than -ivh if the software's old version is installed
 }
 
 uninstall_soft_remote()
@@ -279,3 +346,4 @@ esen-ssh()
  ssh $esen_ssh_arg "$@"
 }
 
+construct_soft_dict

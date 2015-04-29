@@ -20,13 +20,14 @@ CHECK=false
 HELP=false
 FILE=""
 hostlist=""
-secondnode=""
+second_namenode=""
 
 # use for check summary
-local_deps_soft_dict=""
-local_installed_soft_dict=""
-declare -A remote_deps_soft_dict
-declare -A remote_installed_soft_dict
+namenode_deps_soft_dict=""
+namenode_installed_soft_dict=""
+secnamenode_installed_soft_dict=""
+declare -A datanode_deps_soft_dict
+declare -A datanode_installed_soft_dict
 
 
 usage(){
@@ -74,7 +75,7 @@ exit 1
 #while getopts "n:s:?:" options;do
 #  case $options in
 #    n ) IFS=',' hostlist=($OPTARG);;
-#    s ) secondnode="$OPTARG";;
+#    s ) second_namenode="$OPTARG";;
 #    \? ) usage;;
 #    * ) usage;;
 #  esac
@@ -205,7 +206,7 @@ install_secondarynamenode()
 
   for rpm_file in $SEC_NAMENODE_SOFT_DIR/*.rpm
   do
-    check_and_install_remote $secondnode $rpm_file 
+    check_and_install_remote $second_namenode $rpm_file 
   done
 
 }
@@ -213,53 +214,65 @@ install_secondarynamenode()
 
 check_summary()
 {
-  echo "本机的检查报告:"
-  if [[ -n "${local_deps_soft_dict}" ]]; then
-    wecho "本机缺少必要依赖如下:"
-    for deps_soft in ${local_deps_soft_dict};do
+  iecho  "\n\n本机的检查报告:"
+  if [[ -n "${namenode_deps_soft_dict}" ]]; then
+    echo "本机缺少必要依赖如下:"
+    for deps_soft in ${namenode_deps_soft_dict};do
       echo "$deps_soft"
     done
     else
-     iecho "本机已经安装好所有依赖"
+     echo "本机已经安装好所有依赖"
   fi
 
 
 
-  if [[ -n "${local_installed_soft_dict}" ]]; then
-    wecho "本机已经安装如下组件:"
-    for installed_soft in ${local_installed_soft_dict};do
+  if [[ -n "${namenode_installed_soft_dict}" ]]; then
+    echo "本机已经安装如下组件:"
+    for installed_soft in ${namenode_installed_soft_dict};do
       echo "$installed_soft"
     done
     else
-     iecho "本机环境干净，没有安装任何petabase组件"
+     echo "本机环境干净，没有安装任何petabase组件"
   fi
 
+
   for host in ${hostlist[@]}; do
-    echo "$host的检查报告："
-    if [[ -n "${remote_deps_soft_dict[${host}]}" ]]; then
-      wecho "$host缺少必要依赖如下:"
-    for deps_soft in ${remote_deps_soft_dict[${host}]};do
+    iecho  "\n\n${host}的检查报告："
+    if [[ -n "${datanode_deps_soft_dict[${host}]}" ]]; then
+      echo "$host缺少必要依赖如下:"
+    for deps_soft in ${datanode_deps_soft_dict[${host}]};do
       echo "${deps_soft}"
       # if host has install a newer version will also report it, is it a bug?
     done
     else
-      iecho "${host}已经安装好所有依赖"
+      echo "${host}已经安装好所有依赖"
     fi
 
-    if [[ -n "${remote_installed_soft_dict[${host}]}" ]]; then
-    wecho "$host已经安装如下组件:"
-    for installed_soft in ${remote_installed_soft_dict[${host}]};do
+    if [[ -n "${datanode_installed_soft_dict[${host}]}" ]]; then
+    echo "$host已经安装如下组件:"
+    for installed_soft in ${datanode_installed_soft_dict[${host}]};do
       echo "${installed_soft}"
       # if host has install a newer version it won't report it, is it a bug?
       # To fixed it, we can construct a software list to check the software installed in any version
     done
     else
-     iecho "${host} 环境干净，没有安装任何petabase组件"
+     echo "${host} 环境干净，没有安装任何petabase组件"
     fi
   done
 
+
+  iecho  "\n\n第二主机(${second_namenode})的检查报告:"
+  if [[ -n "${secnamenode_installed_soft_dict}" ]]; then
+    echo "第二主机安装了如下组件"
+    for installed_soft in ${secnamenode_installed_soft_dict};do
+      echo "$installed_soft"
+    done
+    else
+     echo "第二主机环境干净，没有安装任何petabase组件"
+  fi
+
   echo "如需解决依赖关系,请先执行预安装脚本之后再执行本脚本"
-  echo "若已经安装某些组件,建议先使用卸载脚本卸载后在运行本脚本"
+  echo "若已经安装某些组件,建议先使用卸载脚本卸载后运行本脚本"
 }
 
 
@@ -273,44 +286,80 @@ check_soft_namenode()
   # 没有安装依赖包，此时预安装脚本会保证安装
   # 安装了依赖包，但版本较旧，此时预安装脚本会帮助更新
   # 安装了依赖包，但版本较新，此时预安装脚本不更新，不做处理，认为新安装包能胜任现在的工作
+
+
   iecho "开始检查本机petabase 依赖的安装情况"
-  for rpm_file in $NESS_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_local $pkgname 
+  for key in ${!NESS_SOFT_DICT[@]};do
+    check_install_local ${key}
     if [ $? = 1 ];then
-      local_deps_soft_dict=${local_deps_soft_dict}",$pkgname"
+      namenode_deps_soft_dict=${namenode_deps_soft_dict}"${NESS_SOFT_DICT[${key}]},"
     fi
   done
-
 
   iecho "开始检查本机petabase组件是否已经安装"
-  for rpm_file in $NAMENODE_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_local $pkgname 
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    check_install_local ${key}
     if [ $? = 0 ];then
-      local_installed_soft_dict=${local_installed_soft_dict}",$pkgname"
+      installed_pkg_name=`rpm -q ${key}`
+      namenode_installed_soft_dict=${namenode_installed_soft_dict}"${installed_pkg_name},"
     fi
   done
 
-  for rpm_file in $COMMON_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_local $pkgname 
+  for key in ${!NAMENODE_SOFT_DICT[@]};do
+    check_install_local ${key}
     if [ $? = 0 ];then
-      local_installed_soft_dict=${local_installed_soft_dict}",$pkgname"
+      installed_pkg_name=`rpm -q ${key}`
+      namenode_installed_soft_dict=${namenode_installed_soft_dict}"${installed_pkg_name},"
     fi
   done
 
-  for rpm_file in $EXT_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_local $pkgname 
+  for key in ${!EXT_SOFT_DICT[@]};do
+    check_install_local ${key}
     if [ $? = 0 ];then
-      local_installed_soft_dict=${local_installed_soft_dict}",$pkgname"
+      installed_pkg_name=`rpm -q ${key}`
+      namenode_installed_soft_dict=${namenode_installed_soft_dict}"${installed_pkg_name},"
     fi
   done
+
+
+#  iecho "开始检查本机petabase 依赖的安装情况"
+#  for rpm_file in $NESS_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_local $pkgname 
+#    if [ $? = 1 ];then
+#      namenode_deps_soft_dict=${namenode_deps_soft_dict}",$pkgname"
+#    fi
+#  done
+#
+#
+#  iecho "开始检查本机petabase组件是否已经安装"
+#  for rpm_file in $NAMENODE_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_local $pkgname 
+#    if [ $? = 0 ];then
+#      namenode_installed_soft_dict=${namenode_installed_soft_dict}",$pkgname"
+#    fi
+#  done
+#
+#  for rpm_file in $COMMON_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_local $pkgname 
+#    if [ $? = 0 ];then
+#      namenode_installed_soft_dict=${namenode_installed_soft_dict}",$pkgname"
+#    fi
+#  done
+#
+#  for rpm_file in $EXT_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_local $pkgname 
+#    if [ $? = 0 ];then
+#      namenode_installed_soft_dict=${namenode_installed_soft_dict}",$pkgname"
+#    fi
+#  done
 }
 
 
@@ -320,38 +369,63 @@ check_soft_datanodes()
   for host in ${hostlist[@]}; do
 
   iecho "开始检查${host} 上petabase 依赖的安装情况"
-  for rpm_file in $NESS_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_remote $host $pkgname 
+  for key in ${!NESS_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
     if [ $? = 1 ];then
-      remote_deps_soft_dict[${host}]=${remote_deps_soft_dict[${host}]}",$pkgname"
+      datanode_deps_soft_dict[${host}]=${datanode_deps_soft_dict[${host}]}"${NESS_SOFT_DICT[${key}]},"
     fi
-  done
 
+  done
 
   iecho "开始检查${host} 上petabase组件是否已经安装"
-  for rpm_file in $DATANODE_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_remote $host $pkgname
+  for key in ${!DATANODE_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
     if [ $? = 0 ];then
-      remote_installed_soft_dict[${host}]=${remote_installed_soft_dict[${host}]}",$pkgname"
+      installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      datanode_installed_soft_dict[${host}]=${datanode_installed_soft_dict[${host}]}"${installed_pkg_name},"
     fi
   done
 
-  for rpm_file in $COMMON_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_remote $host $pkgname 
+
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
     if [ $? = 0 ];then
-      remote_installed_soft_dict[${host}]=${remote_installed_soft_dict[${host}]}",$pkgname"
+      installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      datanode_installed_soft_dict[${host}]=${datanode_installed_soft_dict[${host}]}"${installed_pkg_name},"
     fi
   done
+
+#  iecho "开始检查${host} 上petabase 依赖的安装情况"
+#  for rpm_file in $NESS_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_remote $host $pkgname 
+#    if [ $? = 1 ];then
+#      datanode_deps_soft_dict[${host}]=${datanode_deps_soft_dict[${host}]}",$pkgname"
+#    fi
+#  done
+#
+#
+#  iecho "开始检查${host} 上petabase组件是否已经安装"
+#  for rpm_file in $DATANODE_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_remote $host $pkgname
+#    if [ $? = 0 ];then
+#      datanode_installed_soft_dict[${host}]=${datanode_installed_soft_dict[${host}]}",$pkgname"
+#    fi
+#  done
+#
+#  for rpm_file in $COMMON_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_remote $host $pkgname 
+#    if [ $? = 0 ];then
+#      datanode_installed_soft_dict[${host}]=${datanode_installed_soft_dict[${host}]}",$pkgname"
+#    fi
+#  done
 
  done
-
-check_soft_secondarynamenode
 
 }
 
@@ -359,15 +433,25 @@ check_soft_secondarynamenode
 check_soft_secondarynamenode()
 {
 
-  iecho "开始检查第二主机 ${secondnode} 上petabase 相关组件是否已经安装"
-  for rpm_file in $SEC_NAMENODE_SOFT_DIR/*.rpm
-  do
-    pkgname=`basename $rpm_file .rpm`
-    check_install_remote $secondnode $pkgname 
+
+  iecho "开始检查第二主机 ${second_namenode} 上petabase 相关组件是否已经安装"
+  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
+    check_install_remote ${second_namenode} ${key}
     if [ $? = 0 ];then
-      remote_installed_soft_dict[${secondnode}]=${remote_installed_soft_dict[${secondnode}]}",$pkgname"
+      installed_pkg_name=`ssh ${second_namenode} rpm -q ${key}`
+      secnamenode_installed_soft_dict=${secnamenode_installed_soft_dict}"${installed_pkg_name},"
     fi
   done
+
+#  iecho "开始检查第二主机 ${second_namenode} 上petabase 相关组件是否已经安装"
+#  for rpm_file in $SEC_NAMENODE_SOFT_DIR/*.rpm
+#  do
+#    pkgname=`basename $rpm_file .rpm`
+#    check_install_remote $second_namenode $pkgname 
+#    if [ $? = 0 ];then
+#      datanode_installed_soft_dict[${second_namenode}]=${datanode_installed_soft_dict[${second_namenode}]}",$pkgname"
+#    fi
+#  done
 
 }
 
@@ -552,29 +636,202 @@ uninstall_soft_datanodes()
     done
   done
 
-  uninstall_cdh_secondarynamenode
 }
 
 
-uninstall_cdh_secondarynamenode()
+uninstall_soft_secondarynamenode()
 {
 
   for rpm_file in $SEC_NAMENODE_SOFT_DIR/*.rpm
     do
-      check_and_uninstall_remote $secondnode $rpm_file
+      check_and_uninstall_remote $second_namenode $rpm_file
     done
 }
 
 
-######################################################################################
+# 关联数组无法传入，故而只能逐个处理，无法抽象为函数
+check_and_install_namenode_from_rpm_list()
+{
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`rpm -q ${key}`
+      pkgname=`basename ${COMMON_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_local ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
 
-# first analsyse argument
-TEMP=`getopt -o n:s:f:chz:: -l nodes:,secondary-namenode:,nodes-file:,check,help,z-long \
-     -n '错误的输入参数' -- "$@" `
 
-if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
+  for key in ${!NAMENODE_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`rpm -q ${key}`
+      pkgname=`basename ${NAMENODE_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_local ${NAMENODE_SOFT_DIR}/${NAMENODE_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
 
-eval set -- "$TEMP"
+  for key in ${!EXT_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`rpm -q ${key}`
+      pkgname=`basename ${EXT_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_local ${EXT_SOFT_DIR}/${EXT_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+
+  return 0
+}
+
+check_and_install_datanode_from_rpm_list()
+{
+
+ for host in ${hostlist[@]}; do
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      pkgname=`basename ${COMMON_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${host} ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+
+  for key in ${!DATANODE_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      pkgname=`basename ${DATANODE_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${host} ${DATANODE_SOFT_DIR}/${DATANODE_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+ done
+ return 0
+}
+
+check_and_install_secnamenode_from_rpm_list()
+{
+  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
+    check_install_remote ${second_namenode} ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`ssh ${second_namenode} rpm -q ${key}`
+      pkgname=`basename ${SEC_NAMENODE_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${second_namenode}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${second_namenode}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${second_namenode} ${SEC_NAMENODE_SOFT_DIR}/${SEC_NAMENODE_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${second_namenode}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+ return 0
+}
+
+
+# 不用做任何检查，直接卸载即可
+uninstall_namenode_from_rpm_list()
+{
+
+  for key in ${!NAMENODE_SOFT_DICT[@]};do
+    uninstall_soft_local ${key}
+  done
+
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    uninstall_soft_local ${key}
+  done
+
+  for key in ${!EXT_SOFT_DICT[@]};do
+    uninstall_soft_local ${key}
+  done
+  return 0
+}
+
+uninstall_datanode_from_rpm_list()
+{
+
+ for host in ${hostlist[@]}; do
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    uninstall_soft_remote ${host} ${key}
+  done
+
+
+  for key in ${!DATANODE_SOFT_DICT[@]};do
+    uninstall_soft_remote ${host} ${key}
+  done
+
+ done
+ return 0
+}
+
+uninstall_secnamenode_from_rpm_list()
+{
+  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
+    uninstall_soft_remote ${second_namenode} ${key}
+  done
+ return 0
+}
+
+
 
 arg_check()
 {
@@ -592,15 +849,15 @@ arg_check()
     return 1
   fi
 
-  if [ -z ${secondnode} ];then
+  if [ -z ${second_namenode} ];then
     wecho "请指定第二主机"
     return 1
   fi
 
-  #secondnode 必须在nodes中
+  #second_namenode 必须在nodes中
   in=False
   for host in ${hostlist[@]}; do
-    if [ ${host} = ${secondnode} ];then
+    if [ ${host} = ${second_namenode} ];then
       in=True
       return 0
     fi
@@ -615,7 +872,7 @@ show_operate()
 {
   iecho "操作类型:	${operate}"
   iecho "从机列表:	${hostlist}"
-  iecho "第二主机:	${secondnode}"
+  iecho "第二主机:	${second_namenode}"
 
   iecho "输入 'YES' 将继续操作"
   read  TOGO
@@ -629,6 +886,18 @@ show_operate()
 }
 
 
+######################################################################################
+
+# first analsyse argument
+TEMP=`getopt -o n:s:f:chz:: -l nodes:,secondary-namenode:,nodes-file:,check,help,z-long \
+     -n '错误的输入参数' -- "$@" `
+
+if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
+
+eval set -- "$TEMP"
+
+
+
 while true ; do
   case "$1" in
 # c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
@@ -638,8 +907,8 @@ while true ; do
        shift 2 ;;
 
      -s|--secondary-namenode) 
-       secondnode=$2;
-       #echo "Option $1's argument is $secondnode"; 
+       second_namenode=$2;
+       #echo "Option $1's argument is $second_namenode"; 
        shift 2 ;;
 
      -f|--nodes-file) 
@@ -653,7 +922,7 @@ while true ; do
        do
 	 if [ ${LINE}x = "second-name-node:"x ];then
 	 read LINE
-	 secondnode=$LINE
+	 second_namenode=$LINE
 	 fi
 	 if [ ${LINE}x = "datanode:"x ];then
 	 read LINE
@@ -711,10 +980,15 @@ if [ ${operate}x = "install"x ];then
   check_user-group
   check_user-group_slaves
   iecho "install software"
-  install_soft_namenode
-  install_soft_datanodes
-  install_secondarynamenode
-  #install_haproxy
+
+  # old way
+  #install_soft_namenode
+  #install_soft_datanodes
+  #install_secondarynamenode
+  check_and_install_namenode_from_rpm_list
+  check_and_install_datanode_from_rpm_list
+  check_and_install_secnamenode_from_rpm_list
+
   iecho "configure software"
   conf_bigtop-utils
   prepare_use_hadoop
@@ -728,14 +1002,20 @@ elif [ ${operate}x = "uninstall"x ];then
   iecho "delete user and group"
   delete_group-user_namenode
   delete_group-user_datanode
+
   iecho "uninstall software"
-  uninstall_soft_namenode
-  uninstall_soft_datanodes
+  uninstall_namenode_from_rpm_list
+  uninstall_datanode_from_rpm_list
+  uninstall_secnamenode_from_rpm_list
+  #uninstall_soft_namenode
+  #uninstall_soft_datanodes
+  #uninstall_soft_secondarynamenode
   iecho "`date +%Y%m%d-%T` finish"
 elif [ ${operate}x = "check"x ];then
   iecho "`date +%Y%m%d-%T` check begin"
   check_soft_namenode
   check_soft_datanodes
+  check_soft_secondarynamenode
   check_summary
 else
   echo "Not support operate  ${operate} "
