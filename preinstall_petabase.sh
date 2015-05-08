@@ -22,7 +22,6 @@ CHECK=false
 HELP=false
 FILE=""
 hostlist=""
-secondnode=""
 
 
 copy_esen_software()
@@ -263,7 +262,9 @@ uninstall_mysql()
         eecho "Unable to uninstall mysql-community-perl-DBI to $MASTER_HOST"
       fi
 
+  #删除数据
   rm -rf /var/lib/mysql
+  #删除表
   rm -f /etc/my.cnf
 }
 
@@ -339,29 +340,11 @@ arg_check()
     return 1
   fi
 
-  if [ -z "${secondnode}" ];then
-    wecho "请指定第二主机"
-    return 1
-  fi
-
-  #secondnode 必须在nodes中
-  in=False
-  for host in ${hostlist[@]}; do
-    if [ ${host} = ${secondnode} ];then
-      in=True
-      return 0
-    fi
-  done
-  if [ ${in}x = "False"x ];then
-    wecho "第二主机必须是在从机列表中"
-    return 1
-  fi
 }
 
 show_operate()
 {
   iecho "从机列表:	${hostlist}"
-  iecho "第二主机:	${secondnode}"
 
   iecho "输入 'YES' 将继续操作"
   read  TOGO
@@ -383,11 +366,6 @@ while true ; do
        #echo "Option $1's argument is $hostlist"; 
        shift 2 ;;
 
-     -s|--secondary-namenode) 
-       secondnode=$2;
-       #echo "Option $1's argument is $secondnode"; 
-       shift 2 ;;
-
      -f|--nodes-file) 
        FILE=$2;
        #echo "Option $1's argument is $FILE"; 
@@ -397,10 +375,6 @@ while true ; do
        fi
        while read LINE
        do
-	 if [ ${LINE}x = "second-name-node:"x ];then
-	 read LINE
-	 secondnode=$LINE
-	 fi
 	 if [ ${LINE}x = "datanode:"x ];then
 	 read LINE
          IFS=','; hostlist=$LINE;
@@ -418,6 +392,7 @@ while true ; do
        echo "Option $1's argument is $HELP" ; 
        shift ;;
 
+ # 这里预留一个可选参数的使用方法，方便扩展
  #z has an optional argument. As we are in quoted mode,
  #an empty parameter will be generated if its optional
  #argument is not found.
@@ -430,11 +405,6 @@ while true ; do
      *) echo "Internal error!" ; exit 1 ;;
   esac
 done
-
-#echo "Remaining arguments:"
-#for arg do
-# echo '--> ' "$arg" ;
-#done
 
 
 
@@ -453,7 +423,7 @@ echo "`date +%Y-%m-%d-%T`开始预安装"
 #ssh_auth
 
 check_install_redhat-lsb
-check_install_mysql
+#check_install_mysql
 
 iecho "正在拷贝组件到其他节点"
 copy_esen_software

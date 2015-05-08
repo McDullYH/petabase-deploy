@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # TODO 先安装MapReduce V1  后期 进行YARN的安装
+# TODO 安装完成之后是否需要生成一个文件，记录哪些是namenode，哪些是datanode等等，方便后期控制脚本操作
 
 # 关于使用-ivh参数是否不好的问题:
 # petabase的安装很复杂，依赖很多，推荐的方式是在在线环境下使用yum安装，自动解决依赖。
@@ -30,7 +31,7 @@ declare -A datanode_deps_soft_dict
 declare -A datanode_installed_soft_dict
 
 
-usage(){
+show_usage(){
   cat <<EOF
 
   usage: $0 COMMAND OPTIONS
@@ -66,20 +67,10 @@ usage(){
   	$0 {-h|--help} 
 
 
-  e.g. $0 -n esen-petabase-234,esen-petabase-235 -s esen-petabase-234
+  e.g. $0 install -n esen-petabase-234,esen-petabase-235 -s esen-petabase-234
 EOF
 exit 1
 }
-
-
-#while getopts "n:s:?:" options;do
-#  case $options in
-#    n ) IFS=',' hostlist=($OPTARG);;
-#    s ) second_namenode="$OPTARG";;
-#    \? ) usage;;
-#    * ) usage;;
-#  esac
-#done;
 
 
 check_user-group()
@@ -140,6 +131,7 @@ install_jdk()
 # 第二种的重大缺陷是，如果一个rpm包缺失，脚本不能自动发现。解决办法是安装脚本以及包发布之后生成一个md5码给部署人员验证
 # 这里，我认为第二种方式比较容易维护，故使用之
 
+# not use now
 install_soft_namenode()
 {
 
@@ -165,7 +157,7 @@ install_soft_namenode()
 }
 
 
-
+# not use now
 install_soft_datanodes()
 {
   for host in ${hostlist[@]}; do
@@ -184,8 +176,6 @@ install_soft_datanodes()
 #    ssh   $host  "source /etc/profile"
 
 
-
-
   echo "[Log] install soft on $host"
   for rpm_file in $DATANODE_SOFT_DIR/*.rpm
   do
@@ -201,6 +191,7 @@ install_soft_datanodes()
 
 }
 
+# not use now
 install_secondarynamenode()
 {
 
@@ -212,7 +203,7 @@ install_secondarynamenode()
 }
 
 
-check_summary()
+echo_check_summary()
 {
   iecho  "\n\n本机的检查报告:"
   if [[ -n "${namenode_deps_soft_dict}" ]]; then
@@ -321,7 +312,7 @@ check_soft_namenode()
     fi
   done
 
-
+#  使用上面的方式更准确，不过要创建一个文件列表
 #  iecho "开始检查本机petabase 依赖的安装情况"
 #  for rpm_file in $NESS_SOFT_DIR/*.rpm
 #  do
@@ -395,6 +386,9 @@ check_soft_datanodes()
     fi
   done
 
+
+
+#  使用上面的方式更准确，不过要创建一个文件列表
 #  iecho "开始检查${host} 上petabase 依赖的安装情况"
 #  for rpm_file in $NESS_SOFT_DIR/*.rpm
 #  do
@@ -470,11 +464,13 @@ conf_bigtop-utils()
 prepare_use_hadoop()
 {
   # namenode
-  rm -rf /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-  cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster 1>/dev/null 2>&1
-  alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50 1>/dev/null 2>&1
-  alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster 1>/dev/null 2>&1
-  alternatives --display hadoop-conf
+  rm -rf /etc/hadoop/conf.my_cluster
+  cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster
+  alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50
+  alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster
+
+  # show info
+  #alternatives --display hadoop-conf
   
   # datanodes
   for host in ${hostlist[@]}; do
@@ -482,72 +478,79 @@ prepare_use_hadoop()
     ssh  $host "cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
     ssh  $host "alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50" 1>/dev/null 2>&1
     ssh  $host "alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster" 1>/dev/null 2>&1
-    ssh  $host "alternatives --display hadoop-conf"
+
+    # show info
+    #ssh  $host "alternatives --display hadoop-conf"
   done
 }
 
 conf_namenode()
 {
   # zookeeper
-  cp -f $ESEN_PETA/configuration/cluster/zookeeper/zoo.cfg /etc/zookeeper/conf/zoo.cfg 1>/dev/null 2>&1
+  cp -f $ESEN_PETA/configuration/cluster/zookeeper/zoo.cfg /etc/zookeeper/conf/zoo.cfg
   # hadoop
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/core-site.xml /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/core-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/
 
   # TODO no need?
   #cp -f $ESEN_PETA/configuration/cluster/hadoop/masters /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
   #cp -f $ESEN_PETA/configuration/cluster/hadoop/slaves /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/hadoop /etc/default/hadoop 1>/dev/null 2>&1
+
+  cp -f $ESEN_PETA/configuration/cluster/hadoop/hadoop /etc/default/hadoop
   # hive
-  cp -f $ESEN_PETA/configuration/cluster/hive/hive-site.xml /etc/hive/conf/ 1>/dev/null 2>&1
+  cp -f $ESEN_PETA/configuration/cluster/hive/hive-site.xml /etc/hive/conf/
   # petabase
-  sed -i "s/127.0.0.1/$MASTER_HOST/g" /etc/default/impala 1>/dev/null 2>&1
-  cp -f $ESEN_PETA/configuration/cluster/petabase/core-site.xml /etc/impala/conf/ 1>/dev/null 2>&1
-  cp -f $ESEN_PETA/configuration/cluster/petabase/hdfs-site.xml /etc/impala/conf/ 1>/dev/null 2>&1
-  cp -f $ESEN_PETA/configuration/cluster/petabase/hive-site.xml /etc/impala/conf/ 1>/dev/null 2>&1
+  sed -i "s/127.0.0.1/$MASTER_HOST/g" /etc/default/impala
+  cp -f $ESEN_PETA/configuration/cluster/petabase/core-site.xml /etc/impala/conf/
+  cp -f $ESEN_PETA/configuration/cluster/petabase/hdfs-site.xml /etc/impala/conf/
+  cp -f $ESEN_PETA/configuration/cluster/petabase/hive-site.xml /etc/impala/conf/
 }
 
 conf_datanodes()
 {
   for host in ${hostlist[@]}; do
     # zookeeper
-    scp  /etc/zookeeper/conf/zoo.cfg $host:/etc/zookeeper/conf/ 1>/dev/null 2>&1
+    scp  /etc/zookeeper/conf/zoo.cfg $host:/etc/zookeeper/conf/ 
     # hadoop
-    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/core-site.xml $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/core-site.xml $host:/etc/hadoop/conf.my_cluster/
+    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/
+    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/
 
     # TODO no need?
     #scp  /etc/hadoop/conf.my_cluster/masters $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
     #scp  /etc/hadoop/conf.my_cluster/slaves $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-    scp  /etc/default/hadoop $host:/etc/default/ 1>/dev/null 2>&1
-    ssh  $host "chown root:root /etc/default/hadoop" 1>/dev/null 2>&1
+    scp  /etc/default/hadoop $host:/etc/default/
+    ssh  $host "chown root:root /etc/default/hadoop"
     # hive
-    scp  /etc/hive/conf/hive-site.xml $host:/etc/hive/conf/ 1>/dev/null 2>&1
+    scp  /etc/hive/conf/hive-site.xml $host:/etc/hive/conf/
     # petabase
-    scp  /etc/default/impala $host:/etc/default/ 1>/dev/null 2>&1
-    scp  /etc/impala/conf/core-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
-    scp  /etc/impala/conf/hdfs-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
-    scp  /etc/impala/conf/hive-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
-    ssh  $host "chown -R root:root /etc/impala/conf" 1>/dev/null 2>&1
-    ssh  $host "chown root:root /etc/default/impala" 1>/dev/null 2>&1
+    scp  /etc/default/impala $host:/etc/default/
+    scp  /etc/impala/conf/core-site.xml $host:/etc/impala/conf/
+    scp  /etc/impala/conf/hdfs-site.xml $host:/etc/impala/conf/
+    scp  /etc/impala/conf/hive-site.xml $host:/etc/impala/conf/
+    ssh  $host "chown -R root:root /etc/impala/conf"
+    ssh  $host "chown root:root /etc/default/impala"
   done
 }
 
 prepare_use_hive()
 {
-  cp -f $ESEN_PETA/software/mysql-connector-java-*.jar /usr/lib/hive/lib 1>/dev/null 2>&1
-  cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib 1>/dev/null 2>&1
-  usermod -a -G hadoop petabase 1>/dev/null 2>&1
-  usermod -a -G hive petabase 1>/dev/null 2>&1
-  usermod -a -G hdfs petabase 1>/dev/null 2>&1
+  cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib
+
+  # TODO 貌似原来也没有这个文件，只是原来把输出重定向了...
+  #cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib
+  usermod -a -G hadoop petabase
+  usermod -a -G hive petabase
+  usermod -a -G hdfs petabase
   for host in ${hostlist[@]}; do
-    ssh  $host "cp -f $ESEN_PETA/software/mysql-connector-java-*.jar /usr/lib/hive/lib" 1>/dev/null 2>&1
-    ssh  $host "cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib" 1>/dev/null 2>&1
-    ssh  $host "usermod -a -G hadoop petabase" 1>/dev/null 2>&1
-    ssh  $host "usermod -a -G hive petabase" 1>/dev/null 2>&1
-    ssh  $host "usermod -a -G hdfs petabase" 1>/dev/null 2>&1
+    ssh  $host "cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib"
+
+    # TODO 貌似原来也没有这个文件，只是原来把输出重定向了...
+    #ssh  $host "cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib"
+    ssh  $host "usermod -a -G hadoop petabase"
+    ssh  $host "usermod -a -G hive petabase"
+    ssh  $host "usermod -a -G hdfs petabase"
   done
 }
 
@@ -582,7 +585,7 @@ delete_group-user_datanode()
   done
 }
 
-
+# not use now
 uninstall_soft_namenode()
 {
 #  now install jdk by rpm in preinstall
@@ -613,6 +616,7 @@ uninstall_soft_namenode()
 
 }
 
+# not use now
 uninstall_soft_datanodes()
 {
   for host in ${hostlist[@]}; do
@@ -638,7 +642,7 @@ uninstall_soft_datanodes()
 
 }
 
-
+# not use now
 uninstall_soft_secondarynamenode()
 {
 
@@ -649,7 +653,7 @@ uninstall_soft_secondarynamenode()
 }
 
 
-# 关联数组无法传入，故而只能逐个处理，无法抽象为函数
+# 关联数组无法作为参数传入，故而只能逐个处理，无法抽象为函数
 check_and_install_namenode_from_rpm_list()
 {
   for key in ${!COMMON_SOFT_DICT[@]};do
@@ -892,7 +896,8 @@ show_operate()
 TEMP=`getopt -o n:s:f:chz:: -l nodes:,secondary-namenode:,nodes-file:,check,help,z-long \
      -n '错误的输入参数' -- "$@" `
 
-if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
+if [ $? != 0 ] ; then echo "您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
+if [ $# = 0 ] ; then echo "没有命令和参数,您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
 
 eval set -- "$TEMP"
 
@@ -933,12 +938,12 @@ while true ; do
 
      -c|--check) 
        $CHECK=true; 
-       echo "Option $1's argument is $CHECK" ; 
+       #echo "Option $1's argument is $CHECK" ; 
        shift ;;
 
      -h|--help)  
-       $HELP=true;  
-       echo "Option $1's argument is $HELP" ; 
+       HELP=true;  
+       #echo "Option $1's argument is $HELP" ; 
        shift ;;
 
  #z has an optional argument. As we are in quoted mode,
@@ -958,6 +963,11 @@ done
 #for arg do
 # echo '--> ' "$arg" ;
 #done
+
+if [ "${HELP}"x = "true"x ];then
+show_usage
+exit 0
+fi
 
 
 operate=${1}
@@ -990,6 +1000,7 @@ if [ ${operate}x = "install"x ];then
   check_and_install_secnamenode_from_rpm_list
 
   iecho "configure software"
+  # bigtop 是 cdh的依赖
   conf_bigtop-utils
   prepare_use_hadoop
   prepare_use_hive
@@ -997,6 +1008,7 @@ if [ ${operate}x = "install"x ];then
   conf_datanodes
   conf_haproxy
   iecho "`date +%Y%m%d-%T` finish"
+
 elif [ ${operate}x = "uninstall"x ];then
   iecho "`date +%Y%m%d-%T` uninstall begin"
   iecho "delete user and group"
@@ -1007,6 +1019,7 @@ elif [ ${operate}x = "uninstall"x ];then
   uninstall_namenode_from_rpm_list
   uninstall_datanode_from_rpm_list
   uninstall_secnamenode_from_rpm_list
+
   #uninstall_soft_namenode
   #uninstall_soft_datanodes
   #uninstall_soft_secondarynamenode
@@ -1016,8 +1029,8 @@ elif [ ${operate}x = "check"x ];then
   check_soft_namenode
   check_soft_datanodes
   check_soft_secondarynamenode
-  check_summary
+  echo_check_summary
 else
-  echo "Not support operate  ${operate} "
+  echo "目前还不支持  ${operate}  操作..."
   exit 1;
 fi

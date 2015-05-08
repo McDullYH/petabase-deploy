@@ -22,58 +22,6 @@ if [ "${real_usr}" != "${check_usr}" ]; then
   exit 0
 fi
 
-# no need
-#NAMENODE_FILE_LIST="nn_fl"
-#DATANODE_FILE_LIST="dn_fl"
-#SECNAMENODE_FILE_LIST="snn_fl"
-#COMMON_FILE_LIST="common_fl"
-#EXT_FILE_LIST="ext_fl"
-#NESS_FILE_LIST="ness_fl"
-#MYSQL_FILE_LIST="mysql_fl"
-
-# use MD5 to check the file will be more simple and better
-#check_file()
-#{
-#  if [-f $NAMENODE_FILE_LIST ];then
-#    while read LINE
-#    do
-#      if [-f $NAMENODE_SOFT_DIR/$LINE ];then
-#        echo "$LINE exists"
-#      else
-#        echo "$LINE not exist"
-#      fi
-#    done  < $NAMENODE_FILE_LIST
-#  else
-#    echo "$NAMENODE_FILE_LIST 不存在，无法验证文件完整性"
-#  fi
-#  if [-f $DATANODE_FILE_LIST ];then
-#    while read LINE
-#    do
-#      if [-f $DATANODE_SOFT_DIR/$LINE ];then
-#        echo "$LINE exists"
-#      else
-#        echo "$LINE not exist"
-#      fi
-#    done  < $DATANODE_FILE_LIST
-#  else
-#    echo "$DATANODE_FILE_LIST 不存在，无法验证文件完整性"
-#  fi
-#  if [-f $SECNAMENODE_FILE_LIST ];then
-#    while read LINE
-#    do
-#      if [-f $SEC_NAMENODE_DIR/$LINE ];then
-#        echo "$LINE exists"
-#      else
-#        echo "$LINE not exist"
-#      fi
-#    done  < $SECNAMENODE_FILE_LIST
-#  else
-#    echo "$SECNAMENODE_FILE_LIST 不存在，无法验证文件完整性"
-#  fi
-#  return 1
-#return 1;
-#}
-
 
 #if [ -e "./ssh_config" ];then
 #  SSH_ARGS="-F ./ssh_config"
@@ -95,7 +43,7 @@ MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
 # 必要的依赖软件比较特殊，
 # 特殊1:jdk，在使用rpm -q 查找的时候不能带版本号查找，导致即使安装了却(使用带版本号的命令)检查不到，而安装却会失败
 # 特殊2:openssl，CentOS yum update之后安装了更新的openssl，估计以后会有更新的，所以查找的时候也不应该带版本号
-# 所以，在这里使用软件列表名的方式来判断软件的安装情况
+# 所以，在这里必须使用软件列表名的方式来判断软件的安装情况
 
 declare -A COMMON_SOFT_DICT
 declare -A NAMENODE_SOFT_DICT
@@ -104,9 +52,6 @@ declare -A SEC_NAMENODE_SOFT_DICT
 declare -A NESS_SOFT_DICT
 declare -A EXT_SOFT_DICT
 declare -A MYSQL_SOFT_DICT
-
-
-
 
 construct_soft_dict()
 {
@@ -346,4 +291,5 @@ esen-ssh()
  ssh $esen_ssh_arg "$@"
 }
 
+# construct in this file
 construct_soft_dict
