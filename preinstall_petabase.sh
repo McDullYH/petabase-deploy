@@ -118,6 +118,50 @@ check_and_install_necessary_namenode_from_rpm_list()
   return 0
 }
 
+# for parse xml. remember to yum update just after you setup your CentOS, other dependency will find later
+# now not install i386 package, may wrong,may no need 
+# if you remove the package, must specify the platform(x64 or i386), or it won't delete
+check_and_install_lxml_namenode_from_rpm_list()
+{
+  for key in ${!LXML_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      installed_pkg_name=`rpm -q ${key}`
+      pkgname=`basename ${LXML_SOFT_DICT[${key}]} .rpm`
+
+      # 根据这个 $? 是更好的判断pkg是否安装的方法，但是，目前关联数组字典前面的key会覆盖后面的key
+      # (因为只提供了包名，未提供具体版本，32bit和64bit的包名是一样的)
+      # 但如果rpm.list里面的key全部提供带版本号的包名，又会影响高版本的判断(实际安装了高版本的pkg却找不到)
+      # 故，此处还是按上面的方法判断，只不过我们只安装X64的包（如果安装了32bit的包，会进入"升级流程"，一样达到了安装的效果）
+
+      #echo "${installed_pkg_name}" | grep -q "${pkgname}"
+      #echo $?
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
+	rpm -U   ${LXML_SOFT_DIR}/${LXML_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
+	if [ $? == 0 ];then
+	  iecho "本机的${key}版本更新，无需升级"
+	else
+	  echo "升级本机${key}成功"
+	fi
+      fi
+     else
+      install_soft_local ${LXML_SOFT_DIR}/${LXML_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        return 1
+      fi
+    fi
+  done
+
+  return 0
+}
+
+
+
+
 check_and_install_necessary_datanode_from_rpm_list()
 {
 
@@ -419,8 +463,8 @@ echo "`date +%Y-%m-%d-%T`开始预安装"
 #echo "检查文件完整性"
 #check_file
 
-#iecho "配置SSH"
-#ssh_auth
+iecho "配置SSH"
+ssh_auth
 
 check_install_redhat-lsb
 #check_install_mysql
@@ -430,6 +474,9 @@ copy_esen_software
 
 iecho "安装必要软件"
 check_and_install_necessary_namenode_from_rpm_list
+
+#iecho "安装lxml parser 依赖"
+check_and_install_lxml_namenode_from_rpm_list
 #install_necessary_soft_namenode
 if [ $? -ne 0 ];then
  eecho "主机上安装必要软件失败，退出"

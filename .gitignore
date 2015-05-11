@@ -6,3 +6,6 @@ slaves
 test.sh
 test_getopt.sh
 haproxy.cfg
+configuration.raw
+configuration.ripe
+configuration.tmp

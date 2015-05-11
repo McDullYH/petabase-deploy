@@ -38,6 +38,9 @@ COMMON_SOFT_DIR=$ESEN_PETA/common-software
 NESS_SOFT_DIR=$ESEN_PETA/ness-software
 EXT_SOFT_DIR=$ESEN_PETA/ext-software
 MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
+LXML_SOFT_DIR=$ESEN_PETA/lxml-software
+
+CONFIGURATION_DIR=$ESEN_PETA/sbin/configuration.ripe
 
 
 # 必要的依赖软件比较特殊，
@@ -52,6 +55,7 @@ declare -A SEC_NAMENODE_SOFT_DICT
 declare -A NESS_SOFT_DICT
 declare -A EXT_SOFT_DICT
 declare -A MYSQL_SOFT_DICT
+declare -A LXML_SOFT_DICT
 
 construct_soft_dict()
 {
@@ -97,6 +101,14 @@ construct_soft_dict()
   read LINE
   EXT_SOFT_DICT[${key}]=$LINE
   done < $EXT_SOFT_DIR/rpm.list
+
+
+  while read LINE
+  do
+  key=$LINE
+  read LINE
+  LXML_SOFT_DICT[${key}]=$LINE
+  done < $LXML_SOFT_DIR/rpm.list
 }
 
 
@@ -292,4 +304,5 @@ esen-ssh()
 }
 
 # construct in this file
+# must do this!
 construct_soft_dict

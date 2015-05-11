@@ -10,6 +10,17 @@
 # 所以，脚本编写人员清楚依赖关系，并保证各个软件的运行依赖正确安装即可，故此处使用--nodeps不会有问题，
 # 如果出现问题，当属安装脚本的bug或者缺陷，应修复
 
+# IFS 设置为了 ',' 并没有修改回来，这个是不好的实现，应该如下
+#
+# IFS_BAK=${IFS}
+# do your thing
+# IFS=${IFS_BAK}
+# 但是，本脚本多次使用了 for host in hostlist，所以本脚本没有进行上面的操作
+# 注意，若有 IFS=','  hostlist="1,2,3,4"   ,那么
+# echo ${hostlist}   结果是  1 2 3 4
+# echo "${hostlist}" 结果是  1,2,3,4
+
+
 
 # import temp variable
 source ./deploy_config.sh
@@ -22,6 +33,8 @@ HELP=false
 FILE=""
 hostlist=""
 second_namenode=""
+
+# used for py arg
 
 # use for check summary
 namenode_deps_soft_dict=""
@@ -105,6 +118,12 @@ check_user-group_slaves()
   done
 }
 
+generate_configure_file()
+{
+  iecho "开始生成配置文件"
+  # 注意双引号不能省，特别是 hostlist的双引号
+  python config-setter.py ${1} `hostname` "${hostlist}" "${second_namenode}"
+}
 
 
 # now install jdk by rpm
@@ -130,6 +149,7 @@ install_jdk()
 # 第二种的优势是，当有包更新的时候，我们只需要对目录中的rpm包文件进行替换即可，而第一种方法还需要修改包名(冗长的平台，版本号等等)
 # 第二种的重大缺陷是，如果一个rpm包缺失，脚本不能自动发现。解决办法是安装脚本以及包发布之后生成一个md5码给部署人员验证
 # 这里，我认为第二种方式比较容易维护，故使用之
+# 20150508开始使用 rpm.list的方式，更具合理性
 
 # not use now
 install_soft_namenode()
@@ -487,24 +507,24 @@ prepare_use_hadoop()
 conf_namenode()
 {
   # zookeeper
-  cp -f $ESEN_PETA/configuration/cluster/zookeeper/zoo.cfg /etc/zookeeper/conf/zoo.cfg
+  cp -f ${CONFIGURATION_DIR}/zookeeper/zoo.cfg /etc/zookeeper/conf/zoo.cfg
   # hadoop
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/core-site.xml /etc/hadoop/conf.my_cluster/
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/core-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/
 
   # TODO no need?
-  #cp -f $ESEN_PETA/configuration/cluster/hadoop/masters /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-  #cp -f $ESEN_PETA/configuration/cluster/hadoop/slaves /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+  #cp -f ${CONFIGURATION_DIR}/hadoop/masters /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+  #cp -f ${CONFIGURATION_DIR}/hadoop/slaves /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
 
-  cp -f $ESEN_PETA/configuration/cluster/hadoop/hadoop /etc/default/hadoop
+  cp -f ${CONFIGURATION_DIR}/hadoop/hadoop /etc/default/hadoop
   # hive
-  cp -f $ESEN_PETA/configuration/cluster/hive/hive-site.xml /etc/hive/conf/
+  cp -f ${CONFIGURATION_DIR}/hive/hive-site.xml /etc/hive/conf/
   # petabase
   sed -i "s/127.0.0.1/$MASTER_HOST/g" /etc/default/impala
-  cp -f $ESEN_PETA/configuration/cluster/petabase/core-site.xml /etc/impala/conf/
-  cp -f $ESEN_PETA/configuration/cluster/petabase/hdfs-site.xml /etc/impala/conf/
-  cp -f $ESEN_PETA/configuration/cluster/petabase/hive-site.xml /etc/impala/conf/
+  cp -f ${CONFIGURATION_DIR}/petabase/core-site.xml /etc/impala/conf/
+  cp -f ${CONFIGURATION_DIR}/petabase/hdfs-site.xml /etc/impala/conf/
+  cp -f ${CONFIGURATION_DIR}/petabase/hive-site.xml /etc/impala/conf/
 }
 
 conf_datanodes()
@@ -513,9 +533,9 @@ conf_datanodes()
     # zookeeper
     scp  /etc/zookeeper/conf/zoo.cfg $host:/etc/zookeeper/conf/ 
     # hadoop
-    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/core-site.xml $host:/etc/hadoop/conf.my_cluster/
-    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/
-    scp  $ESEN_PETA/configuration/cluster/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/
+    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/core-site.xml $host:/etc/hadoop/conf.my_cluster/
+    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/
+    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/
 
     # TODO no need?
     #scp  /etc/hadoop/conf.my_cluster/masters $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
@@ -908,7 +928,7 @@ while true ; do
 # c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
      -n|--nodes) 
        IFS=','; hostlist=$2;
-       #echo "Option $1's argument is $hostlist"; 
+       echo "Option $1's argument is $hostlist"; 
        shift 2 ;;
 
      -s|--secondary-namenode) 
@@ -986,6 +1006,7 @@ fi
 
 if [ ${operate}x = "install"x ];then
   iecho "`date +%Y%m%d-%T` install begin"
+  generate_configure_file init
   iecho "check user and group"
   check_user-group
   check_user-group_slaves
