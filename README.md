@@ -1,2 +1,2 @@
 # petabase-deploy
-My petabase  deploy bash script
+esensoft petabase  deploy bash script

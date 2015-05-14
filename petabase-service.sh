@@ -1,25 +1,18 @@
 #!/bin/bash 
-#
-# Description: PetaBase cluster service control
+# # Description: PetaBase cluster service control
 
+
+# 对于某个host某个服务的控制可能用的不多，要么是全部一起启动，停止，要么就会ssh到具体的host来进行具体的服务操作
 source ./deploy_config.sh
 
 MASTER_HOST="`hostname`"
 real_usr="`whoami`"
 
 type=""
-hostlist=()
-servicelist=()
+hostlist=""
+servicelist=""
 second_namenode=""
-
-# 合法的服务名 
-#zookeeper
-#hadoop
-#hive
-#petabase
-# petabase包括 catalog state-store 和 server
-# hadoop包括 hdfs和mapreduce相关
-
+include_master="否"
 
 check_usr="root"
 if [ "${real_usr}" != "${check_usr}" ]; then
@@ -27,24 +20,25 @@ if [ "${real_usr}" != "${check_usr}" ]; then
   exit 1
 fi
 
-
-
 show_usage(){
   cat <<EOF
 
   usage: $0 COMMAND OPTIONS
 
   COMMAND CAN BE
-  init  	To init the special service (Recommand not to specify the -s and -n args, to init all services on all host in first time)
   start  	To start the specify service on specify node
   stop  	To stop the specify service on specify node
   restart  	To restart the specify service on specify node
   status  	To see the status of specify service on specify node
 
   OPTIONS CAN BE:
+
+  SPECIFY WHETHER CONTROL THE NAMENODE(THIS HOST)
+  	$0 {-m|--master} 
+
   SPECIFY THE DATANODE
   	$0 {-n|--nodes} [datanode list] 
-	The datanode list should be separated by ',', seems like host1,host2,host3
+	The datanode list should be separated by ',', just like host1,host2,host3
 
   SPECIFY THE SECOND NAMENODE
   	$0 {-s|--secondary-namenode} [second-namenode]
@@ -53,407 +47,281 @@ show_usage(){
   USE FILE TO SPECIFY THE DATANODE AND NAMENODE
   	$0 {-f|--nodes-file} [filepath]
 
+  SPECIFY THE SERVICE
+  	$0 {-d|--service} [service list]
+	The service include:
+	 zookeeper
+	 hadoop
+	 hive
+	 petabase
+	The service list should be separated by ',', just like hadoop,petabase,hive
+
+
   The file format *MUST* be like following:
   	eg:
   	#file specify the datanodes and the second-namenode
-	datanode:
+	datanodes:
 	esen-petabase-234,esen-petabase-235
 	second-name-node:
 	esen-petabase-234
-  DON'T forget the ":" !
+        DON'T forget the ":" ! And the last 's' after 'datanodes'
 
   SHOW THIS HELP
   	$0 {-h|--help} 
 
 
-  e.g. $0 init -n esen-petabase-234,esen-petabase-235 -s esen-petabase-234
+  e.g. $0 status -n esen-petabase-234,esen-petabase-235 -s esen-petabase-234 --service hadoop,zookeeper
   e.g. $0 restart -f your_file --service zookeeper,petabase-server
+
+
+  *IF YOU JUST SPECIFY THE SERVICE LIST ,ALL THE HOST WILL IN CONTROL*
+  e.g. $0 start --service hive,petabase
+
+
+  *IF YOU JUST USE COMMAND AND NOT ANY HOST, THIS SCRIPT WILL CONTROL ALL THE HOST IN THE CLUST, THIS IS THE *RECOMMMANED* WAY*
+  e.g. $0 start
+  e.g. $0 stop
+  e.g. $0 status
+
 EOF
 exit 1
 }
 
 
+
 arg_check()
 {
-
   if [ ${operate}x = ""x ];then
-    wecho "请指定一个操作类型 init/start/stop/restart/status"
+    wecho "请指定一个操作类型 start/stop/restart/status"
     exit 1
-  elif [ ${operate}x != "init"x ] && [ ${operate}x != "start"x ] && [ ${operate}x != "stop"x ] && [ ${operate}x != "restart"x ] && [ ${operate}x != "status"x ];then
+  elif [ ${operate}x != "start"x ] && [ ${operate}x != "stop"x ] && [ ${operate}x != "restart"x ] && [ ${operate}x != "status"x ];then
     wecho "不支持的操作类型  '${operate}' "
     exit 1
   fi
+}
 
-  if [[ -z ${hostlist} ]];then
-    wecho "请指定从机列表"
-    return 1
+
+# 第一个参数，是否操作主机
+# 第二个参数，从机列表
+# 第三个参数，第二主机  (其实可以为是否操作第二主机)
+# 第四个参数，服务列表
+start_arg()
+{
+  _include_master=${1}
+  _hostlist=${2}
+  _second_namenode=${3}
+  _servicelist=${4}
+
+  show_service_operate "start" "${_include_master}" "${_hostlist}" "${_second_namenode}" "${_servicelist}"
+
+  # 5个参数必须全，这样可以大大简化代码
+  echo "${_servicelist}" | grep -q "\<zookeeper\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      start_zookeeper_local
+    fi
+    if [ -n "${_hostlist}" ];then
+      for host in ${_hostlist[@]};
+      do
+       start_zookeeper_remote ${host}
+      done
+    fi
   fi
 
-  if [ -z ${second_namenode} ];then
-    wecho "请指定第二主机"
-    return 1
+  echo "${_servicelist}" | grep -q "\<hadoop\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      start_hadoop_local
+    fi
+    if [ -n "${_hostlist}" ];then
+      for host in ${_hostlist[@]};
+      do
+       start_hadoop_remote ${host}
+      done
+    fi
+    if [ -n "${_second_namenode}"  ]; then
+      start_secondary_namenode ${_second_namenode}
+    fi
   fi
 
-  #second_namenode 必须在nodes中
-  in=False
-  for host in ${hostlist[@]}; do
-    if [ ${host} = ${second_namenode} ];then
-      in=True
-      return 0
+  echo "${_servicelist}" | grep -q "\<hive\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      start_hive_local
     fi
-  done
-  if [ ${in}x = "False"x ];then
-    wecho "第二主机必须是在从机列表中"
-    return 1
   fi
 
-  #TODO 服务名的检查
-}
-
-show_operate()
-{
-  iecho "操作类型:	${operate}"
-  iecho "从机列表:	${hostlist}"
-  iecho "第二主机:	${second_namenode}"
-  iecho "服务列表:	${servicelist}"
-
-
-  iecho "输入 'YES' 将继续操作"
-  read  TOGO
-  if [ ${TOGO}x = "YES"x ];then
-    return 0;
-  else
-    iecho "操作取消"
-    return 1;
+  echo "${_servicelist}" | grep -q "\<petabase\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      start_petabase_local
+    fi
+    if [ -n "${_hostlist}" ];then
+      for host in ${_hostlist[@]};
+      do
+       start_petabase_remote ${host}
+      done
+    fi
   fi
+
+  return 0
+
 }
 
-
-
-
-# TODO 关于zookeeper 各个node安装的必要性须进一步核实
-init_zookeeper()
+stop_arg()
 {
-  echo "[Log] zookeeper initialization"
-  # master node
-  echo "now in $MASTER_HOST"
-  mkdir -p /var/lib/zookeeper
-  chown -R zookeeper /var/lib/zookeeper/  
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
+  _include_master=${1}
+  _hostlist=${2}
+  _second_namenode=${3}
+  _servicelist=${4}
 
-      ssh  "${node}"  "mkdir -p /var/lib/zookeeper"
-      ssh  "${node}"  "chown -R zookeeper /var/lib/zookeeper/" 
+  show_service_operate "stop" "${_include_master}" "${_hostlist}" "${_second_namenode}" "${_servicelist}"
+
+  echo "${_servicelist}" | grep -q "\<petabase\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      stop_petabase_local
     fi
-  done  
-
-  # TODO is there any thing wrong?
-  # read zoo.cfg to init zookeeper
-  cat /etc/zookeeper/conf/zoo.cfg | grep server | grep -P '^(?!#)' |while read line
-  do
-    # 冒号分开，取第一个；点好分开，取第二个；等号分开，取第一个
-    number=`echo $line | awk -F ":" '{print $1}' | awk -F [.] '{print $2}' | awk -F [=] '{print $1}'`
-    # 道理同上
-    nodename=`echo $line | awk -F ":" '{print $1}' | awk -F [.] '{print $2}' | awk -F [=] '{print $2}'`
-    echo $nodename myid is $number
-
-    # 这里远程操控本机了
-    ssh  -t "${nodename}" "service zookeeper-server init --myid=$number"
-  done
-}
-
-
-start_zookeeper()
-{
-  echo "[Log] start zookeeper"
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service zookeeper-server start
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t "${node}" "service zookeeper-server start"
+    if [ -n "${_hostlist}" ];then
+      for host in ${_hostlist[@]};
+      do
+       stop_petabase_remote ${host}
+      done
     fi
-  done
-}
+  fi
 
-stop_zookeeper()
-{
-  echo "[Log] stop zookeeper"
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service zookeeper-server stop
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t "${node}" "service zookeeper-server stop"
+  echo "${_servicelist}" | grep -q "\<hive\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      stop_hive_local
     fi
-  done
-}
+  fi
 
-
-
-init_hadoop()
-{
-  echo "[Log] hadoop initialization"
-  echo "the hadoop data folder will be removed!"
-
-  # master node
-  echo "now in $MASTER_HOST"
-  rm -rf /data
-  mkdir -p /data/1/dfs/nn
-  chmod 700 /data/1/dfs/nn
-  chown -R hdfs:hdfs /data/1/dfs/nn
-
-  # TODO mapreduce V1 特有
-  mkdir -p /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
-  chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
-
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      # 上面是nn 这里是dn
-      echo "now in $node"
-      ssh ${SSH_ARGS[@]} $node "rm -rf /data"
-      ssh ${SSH_ARGS[@]} $node "mkdir -p /data/1/dfs/dn /data/2/dfs/dn /data/3/dfs/dn"
-      ssh ${SSH_ARGS[@]} $node "chown -R hdfs:hdfs /data/1/dfs/dn /data/2/dfs/dn /data/3/dfs/dn"
-
-      ssh ${SSH_ARGS[@]} $node "mkdir -p /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local"
-      ssh ${SSH_ARGS[@]} $node "chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local"
+  echo "${_servicelist}" | grep -q "\<hadoop\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      stop_hadoop_local
     fi
-  done
-
-  # master node  format
-  echo "now in $MASTER_HOST"
-  sudo -u hdfs hdfs namenode -format
-
-
-  # TODO 这里启动了，所以后面会重复启动，但是这里必须启动，不然没法配置mapreduce
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service hadoop-hdfs-namenode start
-
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t $node "service hadoop-hdfs-datanode start"
+    if [ -n "${_hostlist}" ];then
+      for host in ${_hostlist[@]};
+      do
+       stop_hadoop_remote ${host}
+      done
     fi
-  done
-
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo -u hdfs hadoop fs -mkdir /tmp
-  sudo -u hdfs hadoop fs -chmod -R 1777 /tmp
-
-  sudo -u hdfs hadoop fs -mkdir -p /var/lib/hadoop-hdfs/cache/mapred/mapred/staging
-  sudo -u hdfs hadoop fs -chmod 1777 /var/lib/hadoop-hdfs/cache/mapred/mapred/staging
-  sudo -u hdfs hadoop fs -chown -R mapred /var/lib/hadoop-hdfs/cache/mapred
-  sudo -u hdfs hadoop fs -mkdir -p /tmp/mapred/system
-  sudo -u hdfs hadoop fs -chown mapred:hadoop /tmp/mapred/system
-
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in ${node}"
-      ssh -t $node "service hadoop-0.20-mapreduce-tasktracker start"
+    if [ -n "${_second_namenode}"  ]; then
+      stop_secondary_namenode ${_second_namenode}
     fi
-  done
+  fi
 
-  #hadoop-secondarynamenode
-  ssh -t $second_namenode "service hadoop-hdfs-secondarynamenode start"
-
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service hadoop-0.20-mapreduce-jobtracker start
-}
-
-start_hadoop()
-{
-  echo "[Log] start hadoop"
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service hadoop-hdfs-namenode start
-
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t $node "service hadoop-hdfs-datanode start"
+  echo "${_servicelist}" | grep -q "\<zookeeper\>"
+  if [ $? -eq 0 ];then
+    if [ "${_include_master}"x = "是"x ]; then
+      stop_zookeeper_local
     fi
-  done
-
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t $node "service hadoop-0.20-mapreduce-tasktracker start"
+    if [ -n "${_hostlist}" ];then
+      for host in ${_hostlist[@]};
+      do
+       stop_zookeeper_remote ${host}
+      done
     fi
-  done
+  fi
 
-  #hadoop-secondarynamenode
-  echo "now in $second_namenode"
-  ssh -t $second_namenode "service hadoop-hdfs-secondarynamenode start"
+  return 0
 
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service hadoop-0.20-mapreduce-jobtracker start
 }
 
-stop_hadoop()
+
+operate_start()
 {
-  echo "[Log] stop hadoop"
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service hadoop-hdfs-namenode stop
-  sudo service hadoop-0.20-mapreduce-jobtracker stop
 
-  #hadoop-secondarynamenode
-  echo "now in $second_namenode"
-  ssh -t $second_namenode "service hadoop-hdfs-secondarynamenode stop"
+  cat <<EOF
+      petabse 4 个组件的启动是有依赖关系的，一般来说是zookeeper-->hadoop-->hive-->petabase的顺序
 
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t $node "service hadoop-hdfs-datanode stop"
-      ssh -t $node "service hadoop-0.20-mapreduce-tasktracker stop"
+      即 如果hive相关没有正确启动，petabase服务是无法启动的(比如catalog)
+      但 其中少许一些服务如(datanode)没有正确启动，又不会影响后面的服务
+
+      总之
+      如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service.sh 是最好的选择
+      当然，如果您非常清楚他们之间的关系，登录到相应的机器进行控制也是非常好的选择
+
+      建议您在执行本操作前，首先使用 ./petabase-service.sh status 来查看相应的状态
+EOF
+
+     iecho "输入 'YES' 以确认继续操作"
+     read  TOGO
+     if [ ${TOGO}x != "YES"x ];then
+       exit 0;
+     fi
+
+    if [[ -z "${servicelist}" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
+      # 使用DATANODES 和SECONDARY_NAMENODE 来控制所有服务
+      iecho "操作所有主机所有服务"
+      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${SERVICE_LIST}"
+
+    # 指定了服务 且指定了任意一种主机
+    elif [[ -n "${servicelist}" ]] && [[ -n "${hostlist}" ]] || [[ -n "${second_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
+      start_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${servicelist}"
+
+
+    # 没有指定服务  肯定指定了一中类型的主机
+    elif [[ -z "${servicelist}" ]];then
+      start_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${SERVICE_LIST}"
+
+
+    # 仅仅指定了服务
+    elif [[ "${include_master}" = "否" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]];then 
+      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
+
+    else
+      echo "不支持的参数形式，请联系管理员"
+
     fi
-  done
-}
+    return 0
 
-# hive-server2 服务不需要
-start_hive()
-{
-  echo "[Log] start hive"
-  echo "now in $MASTER_HOST"
-  sudo service hive-metastore start
-  sudo service hive-server2 start
-}
-
-stop_hive()
-{
-  echo "[Log] stop hive"
-  echo "now in $MASTER_HOST"
-  sudo service hive-server2 stop
-  sudo service hive-metastore stop
-}
-
-init_hive()
-{
-  echo "[Log] hive initialization"
-  sudo -u hdfs hadoop fs -mkdir -p /user/hive/warehouse
-  sudo -u hdfs hdfs dfs -chmod 777 /user
-  sudo -u hdfs hdfs dfs -chmod 1777 /user/hive
-  sudo -u hdfs hdfs dfs -chmod 1777 /user/hive/warehouse
 }
 
 
-start_petabase()
+operate_stop()
 {
-  echo "[Log] start PetaBase"
-  #PetaBase masters
-  echo "now in $MASTER_HOST"
-  sudo service petabase-state-store start
-  sleep 3
-  sudo service petabase-catalog start
-  #sleep 3
-  #sudo service petabase-server start
 
-  #PetaBase slaves
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      sleep 3
-      ssh -t $node "service petabase-server start"
+    if [[ -z "${servicelist}" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]] && [[ "${include_master}" = "否" ]]; then
+      # 使用DATANODES 和SECONDARY_NAMENODE 来控制所有服务
+      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${SERVICE_LIST}"
+
+    # 指定了服务 且指定了任意一种主机
+    elif [[ -n "${servicelist}" ]] && [[ -n "${hostlist}" ]] || [[ -n "${second_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
+      stop_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${servicelist}"
+
+
+    # 没有指定服务  肯定指定了一中类型的主机
+    elif [[ -z "${servicelist}" ]];then
+      stop_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${SERVICE_LIST}"
+
+
+    # 仅仅指定了服务
+    elif [[ "${include_master}" = "否" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]];then 
+      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
+
+    else
+      echo "不支持的参数形式，请联系管理员"
+
     fi
-  done
+    return 0
+
 }
 
-stop_petabase()
+# status命令直接查看所有机器的服务运行情况，部署人员配合grep使用即可分开查看
+operate_status()
 {
-  echo "[Log] stop PetaBase"
-  #PetaBase masters
-  #echo "now in $MASTER_HOST"
-  #sudo service petabase-server stop
-
-  #PetaBase slaves
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t $node "service petabase-server stop"
-    fi
-  done
-
-  echo "now in $MASTER_HOST"
-  sudo service petabase-state-store stop
-  sudo service petabase-catalog stop
-  sleep 3
+     status_zookeeper 
+     status_hadoop 
+     status_secondary_namenode "${SECONDARY_NAMENODE}"
+     status_hive 
+     status_petabase
 }
-
-start_first_time()
-{
-  init_zookeeper
-  start_zookeeper
-  init_hadoop
-  init_hive
-  start_hive
-  start_petabase
-}
-
-start_usual()
-{
-  start_zookeeper
-  start_hadoop
-  start_hive
-  start_petabase
-}
-
-stop_usual()
-{
-  stop_petabase
-  stop_hive
-  stop_hadoop
-  stop_zookeeper
-}
-
-status_usual()
-{
-  echo "[Log] status "
-  # master node
-  echo "now in $MASTER_HOST"
-  sudo service zookeeper-server status
-  sudo service hadoop-hdfs-namenode status
-  sudo service hadoop-0.20-mapreduce-jobtracker status
-  sudo service hive-metastore status
-  sudo service hive-server2 status
-  sudo service petabase-state-store status
-  sudo service petabase-catalog status
-  #sudo service petabase-server status
-
-  #hadoop-secondarynamenode
-  echo "now in $second_namenode"
-  ssh -t  $second_namenode "service hadoop-hdfs-secondarynamenode status"
-  
-  # slaves node
-  for node in ${hostlist[@]}; do
-    if [ "${node}" != "${MASTER_HOST}" ]; then
-      echo "now in $node"
-      ssh -t  $node "service zookeeper-server status"
-      ssh -t  $node "service hadoop-hdfs-datanode status"
-      ssh -t  $node "service hadoop-0.20-mapreduce-tasktracker status"
-      ssh -t  $node "service petabase-server status"
-    fi
-  done
-}
-
 ######################################################################################
 
-TEMP=`getopt -o n:s:f:chz:: -l nodes:,secondary-namenode:,nodes-file:,check,help,z-long \
+TEMP=`getopt -o n:d:s:f:mhz:: -l nodes:,secondary-namenode:,nodes-file:,master,service:,help,z-long \
      -n '错误的输入参数' -- "$@" `
 
 if [ $? != 0 ] ; then echo "您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
@@ -496,16 +364,14 @@ while true ; do
 	 done  <${FILE}
        shift 2 ;;
 
+     -m|--master)
+       include_master="是"
+       shift ;;
 
      -d|--service)
        IFS=','; servicelist=$2;
-       #echo "Option $1's argument is $servicelist"; 
+       echo "Option $1's argument is $servicelist"; 
        shift 2 ;;
-
-     -c|--check) 
-       $CHECK=true; 
-       #echo "Option $1's argument is $CHECK" ; 
-       shift ;;
 
      -h|--help)  
        HELP=true;  
@@ -535,6 +401,8 @@ show_usage
 exit 0
 fi
 
+construct_host_info
+
 operate=${1}
 
 arg_check
@@ -542,24 +410,36 @@ if [ $? = 1 ];then
   exit 1
 fi
 
-show_operate
-if [ $? = 1 ];then
-  exit 1;
-fi
 
 
 if [ -n "${operate}" ]; then
-  if [ "${operate}"x = "init"x ]; then
-    start_first_time
-  elif [ "${operate}"x = "start"x ]; then
-    start_usual
+  if [ "${operate}"x = "start"x ]; then
+    operate_start
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
   elif [ "${operate}"x = "stop"x ]; then
-    stop_usual
+    operate_stop
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
+
   elif [ "${operate}"x = "restart"x ]; then
-    stop_usual
-    start_usual
+    operate_stop
+    if [ $? = 1 ];then
+      exit 1
+    fi
+    operate_start
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
+
   elif [ "${operate}"x = "status"x ]; then
-    status_usual
+     operate_status
+
   else
     echo "invalid type arguments"
   fi

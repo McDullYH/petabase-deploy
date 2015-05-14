@@ -65,7 +65,7 @@ class XMLConfigurator():
         if ele==None:
             return None
         else:
-            print "get succed it"
+            #print "get succed it"
             
             # text and string is all OK, but text is used by BS4, string is used by you
             # return ele.parent.find(VALUE).text
@@ -80,7 +80,7 @@ class XMLConfigurator():
             return False
         ele=self.soup.find(name=NAME,text=name)
         if ele==None:
-            print "create it"
+            #print "create it"
             p=Tag(name='property')
             n=Tag(name=NAME)
             n.string=name
@@ -92,7 +92,7 @@ class XMLConfigurator():
             configuration_tag.append(p)
         else:
             ele.parent.find(VALUE).string=value
-            print "set succed it"
+            #print "set succed it"
         return True
     def write(self,output_path='output.xml'):
         with open(output_path,'w') as f:
@@ -199,6 +199,7 @@ if __name__=='__main__':
     dest_configure_dir=None
 
 
+    # 这里由于都是自己调用这个脚本，所以顺序自己清楚
     # 后续使用更科学的参数分析方法
     if sys.argv[1] == 'init':
         src_configure_dir='configuration.raw/'
@@ -214,6 +215,7 @@ if __name__=='__main__':
 
     # now no use, later may use
     second_namenode=sys.argv[4]
+    mysql_root_passwd=sys.argv[5]
 
     class NameNode:
         hdfs_configure=XMLConfigurator(src_configure_dir+HADOOP_DIR+NAMENODE_DIR+HDFS_XML)
@@ -293,6 +295,7 @@ if __name__=='__main__':
             "jdbc:mysql://%s:3306/hive_metastore?createDatabaseIfNotExist=true&amp;characterEncoding=utf8&amp;useUnicode=true" % (namenode))
         Hive.hive_configure.setProperty(r'hive.metastore.uris',"thrift://%s:9083" % (namenode))
         Hive.hive_configure.setProperty(r'hive.zookeeper.quorum',"%s,%s" % (namenode,datanode_list))
+        Hive.hive_configure.setProperty(r'javax.jdo.option.ConnectionPassword',"%s" % (mysql_root_passwd))
 
 
         NameNode.save()
@@ -314,6 +317,7 @@ if __name__=='__main__':
     elif sys.argv[1] =='update':
         update_cfg()
     else:
+        # TODO add later
         pass
 
 

@@ -9,3 +9,5 @@ haproxy.cfg
 configuration.raw
 configuration.ripe
 configuration.tmp
+
+*.pyc

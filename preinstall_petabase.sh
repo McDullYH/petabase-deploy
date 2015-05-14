@@ -1,6 +1,9 @@
 #!/bin/bash
 # 先安装MapReduce V1  后期 进行YARN的安装
 
+# 务必删除本机所有mysql，注意数据的备份
+# 务必安装redhat-lsb，可以使用 yum install -y redhat-lsb
+
 real_usr="`whoami`"
 check_usr="root"
 if [ "${real_usr}" != "${check_usr}" ]; then
@@ -18,9 +21,8 @@ fi
 source ./deploy_config.sh
 
 
-CHECK=false
 HELP=false
-FILE=""
+CUSTOM_FILE=""
 hostlist=""
 
 
@@ -57,6 +59,7 @@ done
 }
 
 
+# not use now
 install_necessary_soft_namenode()
 {
 
@@ -72,6 +75,7 @@ install_necessary_soft_namenode()
 }
 
 
+# not use now
 install_necessary_soft_datanodes()
 {
   for host in ${hostlist[@]}; do
@@ -88,6 +92,18 @@ install_necessary_soft_datanodes()
 
 }
 
+set_time_zone()
+{
+  cp  /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+  for host in ${hostlist[@]}; do
+    ssh "${host}" "cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime"
+  done
+
+}
+
+
+
+# TODO 现在把Hadoop 放到了necessary软件中，也就是说uninstall的时候不会删除，这个逻辑是否存在问题
 check_and_install_necessary_namenode_from_rpm_list()
 {
   for key in ${!NESS_SOFT_DICT[@]};do
@@ -118,7 +134,6 @@ check_and_install_necessary_namenode_from_rpm_list()
   return 0
 }
 
-# for parse xml. remember to yum update just after you setup your CentOS, other dependency will find later
 # now not install i386 package, may wrong,may no need 
 # if you remove the package, must specify the platform(x64 or i386), or it won't delete
 check_and_install_lxml_namenode_from_rpm_list()
@@ -197,9 +212,6 @@ check_and_install_necessary_datanode_from_rpm_list()
 }
 
 
-
-
-
 uninstall_necessary_soft_namenode()
 {
   for rpm_file in $NESS_SOFT_DIR/*.rpm
@@ -234,7 +246,9 @@ uninstall_necessary_soft_datanodes()
 
 ssh_auth()
 {
+  if [ ! -r /root/.ssh/id_rsa ];then
   ssh-keygen -t rsa;
+  fi
   for host in ${hostlist[@]};do
     echo "auth for $host"
     ssh-copy-id $host
@@ -352,6 +366,7 @@ check_install_redhat-lsb()
   done
 }
 
+# TODO 如果机器上面部署了高版本的mysql，且需要使用，如何处理
 check_install_mysql()
 {
   rpm -qa |grep -i mysql 1>/dev/null 2>&1
@@ -369,7 +384,7 @@ check_install_mysql()
 #############################################################################
 
 # first analsyse argument
-TEMP=`getopt -o n:s:f:chz:: -l nodes:,secondary-namenode:,nodes-file:,check,help,z-long \
+TEMP=`getopt -o n:s:f:hz:: -l nodes:,secondary-namenode:,nodes-file:,help,z-long \
      -n '错误的输入参数' -- "$@" `
 
 if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
@@ -411,25 +426,20 @@ while true ; do
        shift 2 ;;
 
      -f|--nodes-file) 
-       FILE=$2;
-       #echo "Option $1's argument is $FILE"; 
-       if [ ! -r $FILE ];then
-         wecho "文件 ${FILE} 不存在或者不可读"
+       CUSTOM_FILE=$2;
+       #echo "Option $1's argument is $CUSTOM_FILE"; 
+       if [ ! -r $CUSTOM_FILE ];then
+         wecho "文件 ${CUSTOM_FILE} 不存在或者不可读"
 	 exit 1
        fi
        while read LINE
        do
-	 if [ ${LINE}x = "datanode:"x ];then
+	 if [ ${LINE}x = "datanodes:"x ];then
 	 read LINE
          IFS=','; hostlist=$LINE;
 	 fi
-	 done  <${FILE}
+	 done  <${CUSTOM_FILE}
        shift 2 ;;
-
-     -c|--check) 
-       $CHECK=true; 
-       echo "Option $1's argument is $CHECK" ; 
-       shift ;;
 
      -h|--help)  
        $HELP=true;  
@@ -460,29 +470,36 @@ fi
 
 echo "`date +%Y-%m-%d-%T`开始预安装"
 
-#echo "检查文件完整性"
-#check_file
-
-iecho "配置SSH"
-ssh_auth
+#iecho "配置SSH"
+#ssh_auth
 
 check_install_redhat-lsb
-#check_install_mysql
+
+check_install_mysql
 
 iecho "正在拷贝组件到其他节点"
 copy_esen_software
 
+iecho "设置时区"
+set_time_zone
+
+
 iecho "安装必要软件"
 check_and_install_necessary_namenode_from_rpm_list
 
-#iecho "安装lxml parser 依赖"
-check_and_install_lxml_namenode_from_rpm_list
-#install_necessary_soft_namenode
 if [ $? -ne 0 ];then
  eecho "主机上安装必要软件失败，退出"
  exit 1
 fi
 
+iecho "安装lxml parser 依赖"
+check_and_install_lxml_namenode_from_rpm_list
+#install_necessary_soft_namenode
+
+if [ $? -ne 0 ];then
+ eecho "主机上安装lxml相关软件失败，退出"
+ exit 1
+fi
 
 check_and_install_necessary_datanode_from_rpm_list
 #install_necessary_soft_datanodes
@@ -505,7 +522,9 @@ configure_selinux
 
  #for test script never use
  #uninstall_mysql
- #uninstall_necessary_soft_namenode
- #uninstall_necessary_soft_datanodes
+
+ # Don't do following， remove openssl is very dangerous
+ #**uninstall_necessary_soft_namenode
+ #**uninstall_necessary_soft_datanodes
 
 iecho "`date +%Y-%m-%d-%T` 完成"
