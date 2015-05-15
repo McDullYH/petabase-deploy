@@ -510,7 +510,7 @@ conf_bigtop-utils()
 {
   iecho "正在配置bigtop..."
   echo "export JAVA_HOME=$java_dir" >> /etc/default/bigtop-utils
-  for host in ${hostlist[@]}; do
+  for host in ${DATANODES[@]}; do
     scp  /etc/default/bigtop-utils $host:/etc/default/ 1>/dev/null 2>&1
     ssh  "{$host}" "chown root:root /etc/default/bigtop-utils" 1>/dev/null 2>&1
   done
@@ -530,7 +530,7 @@ prepare_use_hadoop()
   #alternatives --display hadoop-conf
   
   # datanodes
-  for host in ${hostlist[@]}; do
+  for host in ${DATANODES[@]}; do
     ssh  $host "rm -rf /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
     ssh  $host "cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
     ssh  $host "alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50" 1>/dev/null 2>&1
@@ -569,7 +569,7 @@ conf_namenode()
 
 conf_datanodes()
 {
-  for host in ${hostlist[@]}; do
+  for host in ${DATANODES[@]}; do
     # zookeeper
     scp  /etc/zookeeper/conf/zoo.cfg $host:/etc/zookeeper/conf/ 
     # hadoop
@@ -604,7 +604,7 @@ prepare_use_hive()
   usermod -a -G hadoop petabase
   usermod -a -G hive petabase
   usermod -a -G hdfs petabase
-  for host in ${hostlist[@]}; do
+  for host in ${DATANODES[@]}; do
     ssh  $host "cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib"
 
     # TODO 貌似原来也没有这个文件，只是原来把输出重定向了...
@@ -691,7 +691,7 @@ init_start_hadoop()
   chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
 
   # slaves node
-  for node in ${hostlist[@]}; do
+  for node in ${DATANODES[@]}; do
     if [ "${node}" != "${MASTER_HOST}" ]; then
       # 上面是nn 这里是dn
       echo "now in $node"
@@ -715,7 +715,7 @@ init_start_hadoop()
   sudo service hadoop-hdfs-namenode start
 
   # slaves node
-  for node in ${hostlist[@]}; do
+  for node in ${DATANODES[@]}; do
     if [ "${node}" != "${MASTER_HOST}" ]; then
       echo "now in $node"
       ssh  $node "service hadoop-hdfs-datanode start"
@@ -734,7 +734,7 @@ init_start_hadoop()
   sudo -u hdfs hadoop fs -chown mapred:hadoop /tmp/mapred/system
 
   # slaves node
-  for node in ${hostlist[@]}; do
+  for node in ${DATANODES[@]}; do
     if [ "${node}" != "${MASTER_HOST}" ]; then
       echo "now in ${node}"
       ssh  $node "service hadoop-0.20-mapreduce-tasktracker start"
@@ -1203,8 +1203,12 @@ if [ ${operate}x = "install"x ];then
 
   generate_host_info
 
+  construct_host_info
+
+
   # 实际上就是generate_host_info里面的内容，这里只是为了使用 start_xxx
   # 再次创建相当于更新
+  # 后面不再使用 hostlist等 而是使用 DATANODES等 因为这已经不仅仅是install
 
   iecho "configure software"
   # bigtop 是 cdh的依赖
@@ -1241,7 +1245,7 @@ elif [ ${operate}x = "uninstall"x ];then
 
   # first stop all service
   iecho "即将自动停止所有服务，请按提示操作"
-  ./petabase-service.sh stop
+  ./petabase-service stop
   if [ $? = 1 ];then
     exit 1
   fi

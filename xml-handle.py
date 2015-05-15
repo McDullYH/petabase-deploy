@@ -14,28 +14,6 @@ from bs4.element import Tag
 import sys
 import re
 
-class XMLConfiguratorB():
-    def __init__(self,file_path=None):
-        if file_path==None:
-            pass
-        self.file_path=file_path
-        self.tree = ET.parse(file_path)
-        self.root = tree.getroot()
-    def setProperty(self,name,value):
-        if type(name)!=str or type(value)!=str:
-            print 'key and value must be str'
-            return False
-        ele=root.find(name)
-        if ele==None:
-            configuration_tag=root.find('configuration')
-            property_tag=ET.SubElement(configuration_tag,'property')
-            name_tag=ET.SubElement(property_tag,name)
-            value_tag=ET.SubElement(property_tag,value)
-            tree.write('output.xml')
-        else:
-            pass
-        return True
-
 
 # all impala configure file has following format, it has a name and value tag pair
 #<configuration>
@@ -46,6 +24,9 @@ class XMLConfiguratorB():
 
 NAME='name'
 VALUE='value'
+
+def print_error(err_info):
+    print>>sys.stderr,err_info
 
 
 

@@ -154,7 +154,7 @@ check_and_install_necessary_namenode_from_rpm_list()
    	iecho "已经安装${installed_pkg_name}，不需要再次安装"
       else
         wecho "已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
-	rpm -U   ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
+	rpm -U ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
 	if [ $? == 0 ];then
 	  iecho "本机的${key}版本更新，无需升级"
 	else
@@ -194,7 +194,7 @@ check_and_install_lxml_namenode_from_rpm_list()
    	iecho "已经安装${installed_pkg_name}，不需要再次安装"
       else
         wecho "已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
-	rpm -U   ${LXML_SOFT_DIR}/${LXML_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
+	rpm -U --nodeps  ${LXML_SOFT_DIR}/${LXML_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
 	if [ $? == 0 ];then
 	  iecho "本机的${key}版本更新，无需升级"
 	else
