@@ -7,25 +7,56 @@
 real_usr="`whoami`"
 check_usr="root"
 if [ "${real_usr}" != "${check_usr}" ]; then
-  echo "The user must be $check_usr"
+  echo "必须以 $check_usr 用户运行本脚本"
   exit 0
 fi
 
 
-
-#if [ -e "./ssh_config" ];then
-#  SSH_ARGS="-F ./ssh_config"
-#fi
-
-# import temp variable
-source ./deploy_config.sh
+# import temp variable and function
+source ./utils
 
 
 HELP=false
 CUSTOM_FILE=""
 hostlist=""
 
+show_usage(){
+  cat <<EOF
 
+  usage: $0 OPTIONS
+
+  OPTIONS CAN BE:
+  SPECIFY THE DATANODE
+  	 $0 {-n|--nodes} [datanode list] 
+	 The datanode list should be separated by ',', seems like host1,host2,host3
+
+  USE FILE TO SPECIFY THE DATANODE AND NAMENODE
+  	 $0 {-f|--nodes-file} [filepath]
+
+  The file format must be like following:
+  	 eg:
+  	 # file specify the datanodes and the second-namenode
+	 datanodes:
+	 esen-petabase-234,esen-petabase-235
+	 second-name-node:
+	 esen-petabase-234
+         DON'T forget the ":" ! And the last 's' after 'datanodes'
+	 You needn't specify the second-name-node in the file current, but later when you use petabase-deploy,you must do
+
+  SHOW THIS HELP
+  	 $0 {-h|--help} 
+
+
+  e.g. $0  -n esen-petabase-234,esen-petabase-235 
+  e.g. $0  -f your_datanode_list_file
+
+EOF
+exit 1
+}
+
+
+
+# sync the file 
 copy_esen_software()
 {
 for host in ${hostlist[@]}; do
@@ -56,6 +87,14 @@ for host in ${hostlist[@]}; do
     fi
 
 done
+}
+
+show_mysql_hint()
+{
+  iecho "安装过程中会要求您设置mysql的密码，请设置密码并务必记住这个密码"
+  iecho "务必允许 root 用户远程登录，即"
+  iecho "Disallow root login remotely?"
+  iecho "请选择'N'"
 }
 
 
@@ -103,7 +142,7 @@ set_time_zone()
 
 
 
-# TODO 现在把Hadoop 放到了necessary软件中，也就是说uninstall的时候不会删除，这个逻辑是否存在问题
+# 现在把Hadoop 放到了necessary软件中，也就是说uninstall的时候不会删除
 check_and_install_necessary_namenode_from_rpm_list()
 {
   for key in ${!NESS_SOFT_DICT[@]};do
@@ -176,7 +215,6 @@ check_and_install_lxml_namenode_from_rpm_list()
 
 
 
-
 check_and_install_necessary_datanode_from_rpm_list()
 {
 
@@ -211,35 +249,37 @@ check_and_install_necessary_datanode_from_rpm_list()
  return 0
 }
 
-
+# you'd better not do this remove openssl will break you OS
 uninstall_necessary_soft_namenode()
 {
-  for rpm_file in $NESS_SOFT_DIR/*.rpm
-    do
-      pkgname=`basename $rpm_file .rpm`
-      echo "uninstalling $pkgname"
-      rpm -e --nodeps ${pkgname} 1>/dev/null 2>&1
-      if [ $? -ne 0 ];then
-        eecho "Unable to uninstall ${pkgname} on $MASTER_HOST"
-      fi
-  done
+  echo "uninstall necessary in namenode"
+#  for rpm_file in $NESS_SOFT_DIR/*.rpm
+#    do
+#      pkgname=`basename $rpm_file .rpm`
+#      echo "uninstalling $pkgname"
+#      rpm -e --nodeps ${pkgname} 1>/dev/null 2>&1
+#      if [ $? -ne 0 ];then
+#        eecho "Unable to uninstall ${pkgname} on $MASTER_HOST"
+#      fi
+#  done
 }
 
 
+# you'd better not do this remove openssl will break you OS
 uninstall_necessary_soft_datanodes()
 {
-  for host in ${hostlist[@]}; do
-    for rpm_file in $NESS_SOFT_DIR/*.rpm
-      do 
-        pkgname=`basename $rpm_file .rpm`
-        echo "uninstalling $pkgname on $host"
-        ssh   $host    "rpm -e --nodeps ${pkgname} 1>/dev/null 2>&1"
-        if [ $? -ne 0 ];then
-          eecho "Unable to uninstall ${pkgname} to $host"
-        fi
-      done
-  done
-
+  echo "uninstall necessary in namenode"
+#  for host in ${hostlist[@]}; do
+#    for rpm_file in $NESS_SOFT_DIR/*.rpm
+#      do 
+#        pkgname=`basename $rpm_file .rpm`
+#        echo "uninstalling $pkgname on $host"
+#        ssh   $host    "rpm -e --nodeps ${pkgname} 1>/dev/null 2>&1"
+#        if [ $? -ne 0 ];then
+#          eecho "Unable to uninstall ${pkgname} to $host"
+#        fi
+#      done
+#  done
 }
 
 
@@ -255,6 +295,8 @@ ssh_auth()
   done
 }
 
+
+#TODO 当前要求删除mysql，是不是不太好？
 install_mysql()
 {
 
@@ -282,7 +324,6 @@ install_mysql()
       if [ $? -ne 0 ];then
         eecho "无法安装 $mysql-community-server to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
-
 }
 
 
@@ -292,8 +333,6 @@ configure_mysql()
   chkconfig mysqld on
   sleep 7
   /usr/bin/mysql_secure_installation
-
-  # 注意 Disallow root login remotely? 选择 n
 
 }
 
@@ -381,15 +420,6 @@ check_install_mysql()
 }
 
 
-#############################################################################
-
-# first analsyse argument
-TEMP=`getopt -o n:s:f:hz:: -l nodes:,secondary-namenode:,nodes-file:,help,z-long \
-     -n '错误的输入参数' -- "$@" `
-
-if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
-
-eval set -- "$TEMP"
 
 arg_check()
 {
@@ -417,6 +447,17 @@ show_operate()
 }
 
 
+#############################################################################
+
+# first analsyse argument
+TEMP=`getopt -o n:s:f:hz:: -l nodes:,secondary-namenode:,nodes-file:,help,z-long \
+     -n '错误的输入参数' -- "$@" `
+
+if [ $? != 0 ] ; then echo "退出..." >&2 ; exit 1 ; fi
+
+eval set -- "$TEMP"
+
+
 while true ; do
   case "$1" in
 # c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
@@ -442,8 +483,8 @@ while true ; do
        shift 2 ;;
 
      -h|--help)  
-       $HELP=true;  
-       echo "Option $1's argument is $HELP" ; 
+       HELP="true";  
+       #echo "Option $1's argument is $HELP" ; 
        shift ;;
 
  # 这里预留一个可选参数的使用方法，方便扩展
@@ -460,6 +501,10 @@ while true ; do
   esac
 done
 
+if [ "${HELP}" = "true" ];then
+show_usage
+exit 0
+fi
 
 
 arg_check
@@ -471,11 +516,12 @@ fi
 echo "`date +%Y-%m-%d-%T`开始预安装"
 
 #iecho "配置SSH"
-#ssh_auth
+ssh_auth
 
 check_install_redhat-lsb
 
-check_install_mysql
+# check_install_mysql
+
 
 iecho "正在拷贝组件到其他节点"
 copy_esen_software
@@ -512,6 +558,7 @@ iecho "安装mysql server"
 install_mysql
 
 iecho "配置mysql"
+show_mysql_hint
 configure_mysql
 
 iecho "禁止iptables 启动"

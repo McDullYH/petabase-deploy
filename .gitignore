@@ -11,3 +11,5 @@ configuration.ripe
 configuration.tmp
 
 *.pyc
+
+host.info

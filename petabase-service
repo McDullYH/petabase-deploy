@@ -3,12 +3,11 @@
 
 
 # 对于某个host某个服务的控制可能用的不多，要么是全部一起启动，停止，要么就会ssh到具体的host来进行具体的服务操作
-source ./deploy_config.sh
+source ./utils
 
 MASTER_HOST="`hostname`"
 real_usr="`whoami`"
 
-type=""
 hostlist=""
 servicelist=""
 second_namenode=""
@@ -16,7 +15,7 @@ include_master="否"
 
 check_usr="root"
 if [ "${real_usr}" != "${check_usr}" ]; then
-  echo "The user must be $check_usr"
+  echo "必须使用 $check_usr 来操作本脚本"
   exit 1
 fi
 
@@ -397,8 +396,8 @@ done
 #done
 
 if [ "${HELP}"x = "true"x ];then
-show_usage
-exit 0
+  show_usage
+  exit 0
 fi
 
 construct_host_info
@@ -441,8 +440,8 @@ if [ -n "${operate}" ]; then
      operate_status
 
   else
-    echo "invalid type arguments"
+    echo "目前尚不支持 ${operate} 操作"
   fi
 else
-  echo "please enter arguments completely"
+  echo "您没有输入任何命令"
 fi

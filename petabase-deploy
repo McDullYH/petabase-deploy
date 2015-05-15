@@ -22,28 +22,28 @@
 # echo "${hostlist}" 结果是  1,2,3,4
 
 # 注意，uninstall 不应该指定任何参数，就是卸载机群，原来提供参数只是起到了提示的作用，现在信息存储下来了，不用提示，所以不用参数
+# 注意，install/uninstall 只提供安装和卸载，增删节点是另一个脚本做的事情
 
 
 
 # import temp variable
-source ./deploy_config.sh
+source ./utils
 
-
-# do it when successfully install, forbid to reinstall
-
+# 用户输入
 HELP=false
 CUSTOM_FILE=""
 hostlist=""
 second_namenode=""
 
-# used for py arg
-
+# 关联数组
 # use for check summary
 namenode_deps_soft_dict=""
 namenode_installed_soft_dict=""
 secnamenode_installed_soft_dict=""
 declare -A datanode_deps_soft_dict
 declare -A datanode_installed_soft_dict
+
+is_ready="true"
 
 
 show_usage(){
@@ -81,6 +81,9 @@ show_usage(){
 
 
   e.g. $0 install -n esen-petabase-234,esen-petabase-235 -s esen-petabase-234
+  e.g. $0 status  -f your_deploy_file
+  e.g. $0 uninstall
+
 EOF
 exit 1
 }
@@ -88,13 +91,13 @@ exit 1
 
 check_user-group()
 {
-  echo "Check ${PETA_USER} user and ${PETA_GRP} group in $MASTER_HOST"
+  iecho "正在检查本机  ${PETA_USER} 用户, ${PETA_GRP} 用户组 情况"
   id ${PETA_USER} 1>/dev/null 2>&1
   if [ $? -ne 0 ] ; then
     groupadd ${PETA_GRP} >/dev/null;
     useradd ${PETA_USER} -g ${PETA_GRP} >/dev/null;
       if [ $? -ne 0 ];then
-        eecho "Unable to create user or group to $MASTER_HOST"
+        wecho "无法在本机创建 ${PETA_USER}用户 或者 ${PETA_GRP}用户组"
 	exit 0
       fi
   fi
@@ -103,15 +106,13 @@ check_user-group()
 check_user-group_slaves()
 {
   for host in ${hostlist[@]}; do
-  echo "Check ${PETA_USER} user and ${PETA_GRP} group in $host"
+  iecho "正在检查${host}上  ${PETA_USER} 用户, ${PETA_GRP} 用户组 情况"
   ssh  $host "id ${PETA_USER}" 1>/dev/null 2>&1
     if [ $? -ne 0 ];then
-
-      #echo "ssh  $host \"groupadd ${PETA_GRP}\" 1>/dev/null 2>&1"
       ssh  $host "groupadd ${PETA_GRP}" 1>/dev/null 2>&1
       ssh  $host "useradd ${PETA_USER} -g ${PETA_GRP}" 1>/dev/null 2>&1
       if [ $? -ne 0 ];then
-        eecho "Unable to create user or group to $host"
+        wecho "无法在${host}创建 ${PETA_USER}用户 或者 ${PETA_GRP}用户组"
 	exit 0
       fi
     fi
@@ -122,14 +123,14 @@ generate_configure_file()
 {
   iecho "开始生成配置文件"
   # 注意双引号不能省，特别是 hostlist的双引号，否则不会带逗号
-  python config-setter.py ${1} `hostname` "${hostlist}" "${second_namenode}" "${mysql_root_passwd}"
+  python xml-handle.py ${1} `hostname` "${hostlist}" "${second_namenode}" "${mysql_root_passwd}"
 }
 
 
 # 后期进行节点的增删的时候还需要修改此文件，可能会使用xml来操作
 generate_host_info()
 {
-  iecho "开始生成节点信息文件"
+  iecho "开始生成节点信息"
   # 第一个是 >  很关键!
   echo "second-name-node:" > ${HOST_INFO_FILE}
   echo "${second_namenode}" >> ${HOST_INFO_FILE}
@@ -140,7 +141,7 @@ generate_host_info()
 
 clean_host_info()
 {
-  iecho "删除节点信息文件"
+  iecho "清理节点信息"
   > ${HOST_INFO_FILE}
 }
 
@@ -303,9 +304,14 @@ echo_check_summary()
      echo "第二主机环境干净，没有安装任何petabase组件"
   fi
 
-  echo -e "\n如需解决依赖关系,请先执行预安装脚本之后再执行本脚本"
-  echo -e "若已经安装某些组件,建议先使用本脚本卸载后再执行安装操作"
-  echo -e "如果所有机器的依赖关系已经满足，并且没有机器安装任何组件，那么您可以继续进行petabase机群的安装了"
+  if [ "${is_ready}"x = "false"x ];then
+    echo -e "\n如需解决依赖关系,请先执行预安装脚本之后再执行本脚本"
+    echo -e "若已经安装某些组件,建议先使用本脚本卸载后再执行安装操作"
+  elif [ "${is_ready}"x = "true"x ];then
+    echo -e "所有机器的依赖关系已经满足，并且没有机器安装任何组件，那么您可以继续进行petabase集群的安装了"
+  else
+    echo "脚本内部错误，请联系脚本编写人员"
+  fi
 }
 
 
@@ -325,6 +331,7 @@ check_soft_namenode()
     check_install_local ${key}
     if [ $? = 1 ];then
       namenode_deps_soft_dict=${namenode_deps_soft_dict}"${NESS_SOFT_DICT[${key}]},"
+      is_ready="false"
     fi
   done
 
@@ -334,6 +341,7 @@ check_soft_namenode()
     if [ $? = 0 ];then
       installed_pkg_name=`rpm -q ${key}`
       namenode_installed_soft_dict=${namenode_installed_soft_dict}"${installed_pkg_name},"
+      is_ready="false"
     fi
   done
 
@@ -342,6 +350,7 @@ check_soft_namenode()
     if [ $? = 0 ];then
       installed_pkg_name=`rpm -q ${key}`
       namenode_installed_soft_dict=${namenode_installed_soft_dict}"${installed_pkg_name},"
+      is_ready="false"
     fi
   done
 
@@ -350,6 +359,7 @@ check_soft_namenode()
     if [ $? = 0 ];then
       installed_pkg_name=`rpm -q ${key}`
       namenode_installed_soft_dict=${namenode_installed_soft_dict}"${installed_pkg_name},"
+      is_ready="false"
     fi
   done
 
@@ -405,6 +415,7 @@ check_soft_datanodes()
     check_install_remote ${host} ${key}
     if [ $? = 1 ];then
       datanode_deps_soft_dict[${host}]=${datanode_deps_soft_dict[${host}]}"${NESS_SOFT_DICT[${key}]},"
+      is_ready="false"
     fi
 
   done
@@ -415,6 +426,7 @@ check_soft_datanodes()
     if [ $? = 0 ];then
       installed_pkg_name=`ssh ${host} rpm -q ${key}`
       datanode_installed_soft_dict[${host}]=${datanode_installed_soft_dict[${host}]}"${installed_pkg_name},"
+      is_ready="false"
     fi
   done
 
@@ -424,6 +436,7 @@ check_soft_datanodes()
     if [ $? = 0 ];then
       installed_pkg_name=`ssh ${host} rpm -q ${key}`
       datanode_installed_soft_dict[${host}]=${datanode_installed_soft_dict[${host}]}"${installed_pkg_name},"
+      is_ready="false"
     fi
   done
 
@@ -474,6 +487,7 @@ check_soft_secondarynamenode()
     if [ $? = 0 ];then
       installed_pkg_name=`ssh ${second_namenode} rpm -q ${key}`
       secnamenode_installed_soft_dict=${secnamenode_installed_soft_dict}"${installed_pkg_name},"
+      is_ready="false"
     fi
   done
 
@@ -494,13 +508,16 @@ check_soft_secondarynamenode()
 #这个环境变量必须设置！！
 conf_bigtop-utils()
 {
+  iecho "正在配置bigtop..."
   echo "export JAVA_HOME=$java_dir" >> /etc/default/bigtop-utils
   for host in ${hostlist[@]}; do
     scp  /etc/default/bigtop-utils $host:/etc/default/ 1>/dev/null 2>&1
-    ssh  $host "chown root:root /etc/default/bigtop-utils" 1>/dev/null 2>&1
+    ssh  "{$host}" "chown root:root /etc/default/bigtop-utils" 1>/dev/null 2>&1
   done
 }
 
+
+# 后期提供更精细的拷贝
 prepare_use_hadoop()
 {
   # namenode
@@ -533,7 +550,7 @@ conf_namenode()
   cp -f ${CONFIGURATION_DIR}/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/
   cp -f ${CONFIGURATION_DIR}/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/
 
-  # TODO no need?
+  # TODO no need? 曾经有一个集群 datanodes slaves里面存的localhost 
   #cp -f ${CONFIGURATION_DIR}/hadoop/masters /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
   #cp -f ${CONFIGURATION_DIR}/hadoop/slaves /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
 
@@ -542,7 +559,7 @@ conf_namenode()
   cp -f ${CONFIGURATION_DIR}/hive/hive-site.xml /etc/hive/conf/
   # petabase
 
-  # 做一个简单的替换就行了
+  # TODO 做一个简单的替换就行了
   sed -i "s/127.0.0.1/$MASTER_HOST/g" /etc/default/impala
 
   cp -f ${CONFIGURATION_DIR}/petabase/core-site.xml /etc/impala/conf/
@@ -560,9 +577,10 @@ conf_datanodes()
     scp  ${CONFIGURATION_DIR}/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/
     scp  ${CONFIGURATION_DIR}/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/
 
-    # TODO no need?
+    # TODO no need? 曾经有一个集群 datanodes slaves里面存的localhost 
     #scp  /etc/hadoop/conf.my_cluster/masters $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
     #scp  /etc/hadoop/conf.my_cluster/slaves $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+
     scp  /etc/default/hadoop $host:/etc/default/
     ssh  $host "chown root:root /etc/default/hadoop"
     # hive
@@ -630,6 +648,7 @@ init_zookeeper()
 #    echo $nodename myid is $number
 #
 #    # 这里远程操控本机了
+     # 不知为何，这里执行第一个ssh之后就退出
 #    ssh  ${nodename} "service zookeeper-server init --myid=$number"
 #  done
 
@@ -1039,9 +1058,9 @@ command_arg_check()
 {
 
   if [ ${operate}x = ""x ];then
-    wecho "请指定一个操作类型 install/uninstall"
+    wecho "请指定一个操作类型 status/install/uninstall"
     exit 1
-  elif [ ${operate}x != "install"x ] && [ ${operate}x != "uninstall"x ] && [ ${operate}x != "check"x ];then
+  elif [ ${operate}x != "install"x ] && [ ${operate}x != "uninstall"x ] && [ ${operate}x != "status"x ];then
     wecho "不支持的操作类型  '${operate}' "
     exit 1
   fi
@@ -1147,21 +1166,16 @@ done
 #done
 
 if [ "${HELP}"x = "true"x ];then
-show_usage
-exit 0
+  show_usage
+  exit 0
 fi
 
-
 operate=${1}
-
-
 
 command_arg_check
 if [ $? = 1 ];then
   exit 1
 fi
-
-
 
 if [ ${operate}x = "install"x ];then
   iecho "`date +%Y%m%d-%T` install begin"
@@ -1171,11 +1185,11 @@ if [ ${operate}x = "install"x ];then
     exit 1;
   fi
   option_arg_check
+  check_user-group
+  check_user-group_slaves
   get_mysql_root_passwd
   generate_configure_file init
   iecho "check user and group"
-  check_user-group
-  check_user-group_slaves
   iecho "install software"
 
   # old way
@@ -1187,7 +1201,6 @@ if [ ${operate}x = "install"x ];then
   check_and_install_secnamenode_from_rpm_list
 
 
-  # 这里如果是add就会有问题，尝试新加一个隐藏的命令
   generate_host_info
 
   # 实际上就是generate_host_info里面的内容，这里只是为了使用 start_xxx
@@ -1216,7 +1229,6 @@ if [ ${operate}x = "install"x ];then
   iecho "`date +%Y%m%d-%T` finish"
 
 
-# 卸载中指定nodes是起到的提示作用还是指定作用，如果只是提示作用的话是否是否一个文件记录信息就够了呢
 elif [ ${operate}x = "uninstall"x ];then
 
   show_deploy_operate "uninstall" "${DATANODES}" "${SECONDARY_NAMENODE}"
@@ -1234,7 +1246,6 @@ elif [ ${operate}x = "uninstall"x ];then
     exit 1
   fi
 
-
   delete_group-user_namenode
   delete_group-user_datanode
 
@@ -1248,8 +1259,8 @@ elif [ ${operate}x = "uninstall"x ];then
   #uninstall_soft_datanodes
   #uninstall_soft_secondarynamenode
   iecho "`date +%Y%m%d-%T` finish"
-elif [ ${operate}x = "check"x ];then
-  iecho "`date +%Y%m%d-%T` check begin"
+elif [ ${operate}x = "status"x ];then
+  iecho "`date +%Y%m%d-%T` 开始检查安装环境..."
   check_soft_namenode
   check_soft_datanodes
   check_soft_secondarynamenode
