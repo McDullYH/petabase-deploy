@@ -8,9 +8,11 @@ source ./utils
 MASTER_HOST="`hostname`"
 real_usr="`whoami`"
 
-hostlist=""
+
+CUSTOM_FILE=""
+datanodes=""
 servicelist=""
-second_namenode=""
+secondary_namenode=""
 include_master="否"
 
 check_usr="root"
@@ -88,7 +90,7 @@ exit 1
 
 
 
-arg_check()
+service_arg_check()
 {
   if [ ${operate}x = ""x ];then
     wecho "请指定一个操作类型 start/stop/restart/status"
@@ -107,11 +109,14 @@ arg_check()
 start_arg()
 {
   _include_master=${1}
-  _hostlist=${2}
-  _second_namenode=${3}
+  _datanodes=${2}
+  _secondary_namenode=${3}
   _servicelist=${4}
 
-  show_service_operate "start" "${_include_master}" "${_hostlist}" "${_second_namenode}" "${_servicelist}"
+  show_service_operate "start" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_servicelist}"
+  if [ $? != 0 ];then
+    exit 1;
+  fi
 
   # 5个参数必须全，这样可以大大简化代码
   echo "${_servicelist}" | grep -q "\<zookeeper\>"
@@ -119,8 +124,8 @@ start_arg()
     if [ "${_include_master}"x = "是"x ]; then
       start_zookeeper_local
     fi
-    if [ -n "${_hostlist}" ];then
-      for host in ${_hostlist[@]};
+    if [ -n "${_datanodes}" ];then
+      for host in ${_datanodes[@]};
       do
        start_zookeeper_remote ${host}
       done
@@ -130,16 +135,21 @@ start_arg()
   echo "${_servicelist}" | grep -q "\<hadoop\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
+    # TODO  包括了 hadoop和mapred
+    # stop 暂时没有这么精细的控制，主要是 stop_hadoop *** 直接控制了hadoop jobtracker
       start_hadoop_local
+      start_mapred_jobtracker_local
     fi
-    if [ -n "${_hostlist}" ];then
-      for host in ${_hostlist[@]};
+    if [ -n "${_datanodes}" ];then
+      for host in ${_datanodes[@]};
       do
+      # TODO  包括了 hadoop和mapred
        start_hadoop_remote ${host}
+       start_mapred_tasktracker_local ${host}
       done
     fi
-    if [ -n "${_second_namenode}"  ]; then
-      start_secondary_namenode ${_second_namenode}
+    if [ -n "${_secondary_namenode}"  ]; then
+      start_secondary_namenode ${_secondary_namenode}
     fi
   fi
 
@@ -155,8 +165,8 @@ start_arg()
     if [ "${_include_master}"x = "是"x ]; then
       start_petabase_local
     fi
-    if [ -n "${_hostlist}" ];then
-      for host in ${_hostlist[@]};
+    if [ -n "${_datanodes}" ];then
+      for host in ${_datanodes[@]};
       do
        start_petabase_remote ${host}
       done
@@ -170,19 +180,19 @@ start_arg()
 stop_arg()
 {
   _include_master=${1}
-  _hostlist=${2}
-  _second_namenode=${3}
+  _datanodes=${2}
+  _secondary_namenode=${3}
   _servicelist=${4}
 
-  show_service_operate "stop" "${_include_master}" "${_hostlist}" "${_second_namenode}" "${_servicelist}"
+  show_service_operate "stop" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_servicelist}"
 
   echo "${_servicelist}" | grep -q "\<petabase\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       stop_petabase_local
     fi
-    if [ -n "${_hostlist}" ];then
-      for host in ${_hostlist[@]};
+    if [ -n "${_datanodes}" ];then
+      for host in ${_datanodes[@]};
       do
        stop_petabase_remote ${host}
       done
@@ -201,14 +211,14 @@ stop_arg()
     if [ "${_include_master}"x = "是"x ]; then
       stop_hadoop_local
     fi
-    if [ -n "${_hostlist}" ];then
-      for host in ${_hostlist[@]};
+    if [ -n "${_datanodes}" ];then
+      for host in ${_datanodes[@]};
       do
        stop_hadoop_remote ${host}
       done
     fi
-    if [ -n "${_second_namenode}"  ]; then
-      stop_secondary_namenode ${_second_namenode}
+    if [ -n "${_secondary_namenode}"  ]; then
+      stop_secondary_namenode ${_secondary_namenode}
     fi
   fi
 
@@ -217,8 +227,8 @@ stop_arg()
     if [ "${_include_master}"x = "是"x ]; then
       stop_zookeeper_local
     fi
-    if [ -n "${_hostlist}" ];then
-      for host in ${_hostlist[@]};
+    if [ -n "${_datanodes}" ];then
+      for host in ${_datanodes[@]};
       do
        stop_zookeeper_remote ${host}
       done
@@ -252,24 +262,25 @@ EOF
        exit 0;
      fi
 
-    if [[ -z "${servicelist}" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
+      if [[ -n "${servicelist}" ]];then
+      	echo "not none"
+      else
+      	echo "none"
+      fi
+
+    if [[ -z "${servicelist}" ]];then
+      servicelist=${SERVICE_LIST}
+    fi
+
+
+    if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
       # 使用DATANODES 和SECONDARY_NAMENODE 来控制所有服务
       iecho "操作所有主机所有服务"
-      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${SERVICE_LIST}"
+      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
 
     # 指定了服务 且指定了任意一种主机
-    elif [[ -n "${servicelist}" ]] && [[ -n "${hostlist}" ]] || [[ -n "${second_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
-      start_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${servicelist}"
-
-
-    # 没有指定服务  肯定指定了一中类型的主机
-    elif [[ -z "${servicelist}" ]];then
-      start_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${SERVICE_LIST}"
-
-
-    # 仅仅指定了服务
-    elif [[ "${include_master}" = "否" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]];then 
-      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
+    elif [[ -n "${datanodes}" ]] || [[ -n "${secondary_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
+      start_arg "${include_master}" "${datanodes}" "${secondary_namenode}"  "${servicelist}"
 
     else
       echo "不支持的参数形式，请联系管理员"
@@ -283,23 +294,18 @@ EOF
 operate_stop()
 {
 
-    if [[ -z "${servicelist}" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]] && [[ "${include_master}" = "否" ]]; then
+    if [[ -z "${servicelist}" ]];then
+      servicelist=${SERVICE_LIST}
+    fi
+
+    if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
       # 使用DATANODES 和SECONDARY_NAMENODE 来控制所有服务
-      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${SERVICE_LIST}"
+      iecho "操作所有主机所有服务"
+      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
 
     # 指定了服务 且指定了任意一种主机
-    elif [[ -n "${servicelist}" ]] && [[ -n "${hostlist}" ]] || [[ -n "${second_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
-      stop_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${servicelist}"
-
-
-    # 没有指定服务  肯定指定了一中类型的主机
-    elif [[ -z "${servicelist}" ]];then
-      stop_arg "${include_master}" "${hostlist}" "${second_namenode}"  "${SERVICE_LIST}"
-
-
-    # 仅仅指定了服务
-    elif [[ "${include_master}" = "否" ]] && [[ -z "${hostlist}" ]] && [[ -z "${second_namenode}" ]];then 
-      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
+    elif [[ -n "${datanodes}" ]] || [[ -n "${secondary_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
+      stop_arg "${include_master}" "${datanodes}" "${secondary_namenode}"  "${servicelist}"
 
     else
       echo "不支持的参数形式，请联系管理员"
@@ -334,33 +340,33 @@ while true ; do
   case "$1" in
 # c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
      -n|--nodes) 
-       IFS=','; hostlist=$2;
-       #echo "Option $1's argument is $hostlist"; 
+       IFS=','; datanodes=$2;
+       #echo "Option $1's argument is $datanodes"; 
        shift 2 ;;
 
      -s|--secondary-namenode) 
-       second_namenode=$2;
-       #echo "Option $1's argument is $second_namenode"; 
+       secondary_namenode=$2;
+       #echo "Option $1's argument is $secondary_namenode"; 
        shift 2 ;;
 
      -f|--nodes-file) 
-       FILE=$2;
-       #echo "Option $1's argument is $FILE"; 
-       if [ ! -r $FILE ];then
-         wecho "文件 ${FILE} 不存在或者不可读"
+       CUSTOM_FILE=$2;
+       #echo "Option $1's argument is $CUSTOM_FILE"; 
+       if [ ! -r $CUSTOM_FILE ];then
+         wecho "文件 ${CUSTOM_FILE} 不存在或者不可读"
 	 exit 1
        fi
        while read LINE
        do
 	 if [ ${LINE}x = "second-name-node:"x ];then
 	 read LINE
-	 second_namenode=$LINE
+	 secondary_namenode=$LINE
 	 fi
-	 if [ ${LINE}x = "datanode:"x ];then
+	 if [ ${LINE}x = "datanodes:"x ];then
 	 read LINE
-         IFS=','; hostlist=$LINE;
+         IFS=','; datanodes=$LINE;
 	 fi
-	 done  <${FILE}
+	 done  <${CUSTOM_FILE}
        shift 2 ;;
 
      -m|--master)
@@ -404,7 +410,7 @@ construct_host_info
 
 operate=${1}
 
-arg_check
+service_arg_check
 if [ $? = 1 ];then
   exit 1
 fi

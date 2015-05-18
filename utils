@@ -45,6 +45,7 @@ CONFIGURATION_DIR=$ESEN_PETA/sbin/configuration.ripe
 
 # 依然是逗号号分割
 HOST_INFO_FILE=$ESEN_PETA/sbin/host.info
+HOST_INFO_XML=$ESEN_PETA/sbin/host-info.xml
 DATANODES=""
 SECONDARY_NAMENODE=""
 SERVICE_LIST="zookeeper,hadoop,hive,petabase"
@@ -63,6 +64,39 @@ declare -A NESS_SOFT_DICT
 declare -A EXT_SOFT_DICT
 declare -A MYSQL_SOFT_DICT
 declare -A LXML_SOFT_DICT
+
+check_namenode_user-group()
+{
+  iecho "正在检查本机  ${PETA_USER} 用户, ${PETA_GRP} 用户组 情况"
+  id ${PETA_USER} 1>/dev/null 2>&1
+  if [ $? -ne 0 ] ; then
+    groupadd ${PETA_GRP} >/dev/null;
+    useradd ${PETA_USER} -g ${PETA_GRP} >/dev/null;
+      if [ $? -ne 0 ];then
+        wecho "无法在本机创建 ${PETA_USER}用户 或者 ${PETA_GRP}用户组"
+	exit 0
+      fi
+  fi
+}
+
+check_datanode_user-group()
+{
+  _datanodes=$1
+  for host in ${_datanodes[@]}; do
+  iecho "正在检查${host}上  ${PETA_USER} 用户, ${PETA_GRP} 用户组 情况"
+  ssh  $host "id ${PETA_USER}" 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+      ssh  $host "groupadd ${PETA_GRP}" 1>/dev/null 2>&1
+      ssh  $host "useradd ${PETA_USER} -g ${PETA_GRP}" 1>/dev/null 2>&1
+      if [ $? -ne 0 ];then
+        wecho "无法在${host}创建 ${PETA_USER}用户 或者 ${PETA_GRP}用户组"
+	exit 0
+      fi
+    fi
+  done
+}
+
+
 
 construct_soft_dict()
 {
@@ -122,21 +156,35 @@ construct_soft_dict()
 
 construct_host_info()
 {
-if [ ! -r ${HOST_INFO_FILE} ];then
-  wecho "集群节点信息文件 ${HOST_INFO_FILE} 不存在"
-  exit 1
-fi
-while read LINE
-do
-  if [ ${LINE}x = "second-name-node:"x ];then
-  read LINE
-  SECONDARY_NAMENODE=$LINE
+
+# 不再使用读文件的方式，使用下面的读xml的方式
+#  if [ ! -r ${HOST_INFO_FILE} ];then
+#    wecho "集群节点信息文件 ${HOST_INFO_FILE} 不存在"
+#    exit 1
+#  fi
+#  while read LINE
+#  do
+#    if [ ${LINE}x = "second-name-node:"x ];then
+#    read LINE
+#    SECONDARY_NAMENODE=$LINE
+#    fi
+#    if [ ${LINE}x = "datanodes:"x ];then
+#    read LINE
+#    IFS=','; DATANODES=$LINE;
+#    fi
+#  done  <${HOST_INFO_FILE}
+
+
+  if [ ! -r ${HOST_INFO_XML} ];then
+    wecho "集群节点信息文件 ${HOST_INFO_XML} 不存在"
+    exit 1
   fi
-  if [ ${LINE}x = "datanodes:"x ];then
-  read LINE
-  IFS=','; DATANODES=$LINE;
-  fi
-done  <${HOST_INFO_FILE}
+
+
+  SECONDARY_NAMENODE=`python xml-handle.py get secondary-namenode`;
+  IFS=','; DATANODES=`python xml-handle.py get datanodes`;
+
+
 }
 
 
@@ -383,49 +431,54 @@ start_zookeeper_remote()
 }
 
 
-
 # local 一般就是 namenode， 我们默认在本机上部署namenode，且在本机上面执行所有的脚本
 start_hadoop_local()
 {
   service hadoop-hdfs-namenode start 1>/dev/null 2>&1
-  ret1=$?
-  if [ ${ret1} -ne 0 ];then
+  ret=$?
+  if [ ${ret} -ne 0 ];then
     eecho "本机 hadoop-hdfs-namenode 启动失败"
   else
     echo "本机 hadoop-hdfs-namenode 启动成功"
   fi
 
+  return ${ret}
+}
+
+start_mapred_jobtracker_local()
+{
   service hadoop-0.20-mapreduce-jobtracker start 1>/dev/null 2>&1
-  ret2=${?}
-  if [ ${ret2} -ne 0 ];then
+  ret=${?}
+  if [ ${ret} -ne 0 ];then
     eecho "本机 hadoop-0.20-mapreduce-jobtracker 启动失败"
   else
     echo "本机 hadoop-0.20-mapreduce-jobtracker 启动成功"
   fi
-  ret=${ret1}||${ret2}
-
   return ${ret}
+
 }
 
 start_hadoop_remote()
 {
   ssh "${1}" "service hadoop-hdfs-datanode start" 1>/dev/null 2>&1
-  ret1=${?}
-  if [ ${ret1} -ne 0 ];then
+  ret=${?}
+  if [ ${ret} -ne 0 ];then
     eecho "${1} hadoop-hdfs-datanode 启动失败"
   else
     echo "${1} hadoop-hdfs-datanode 启动成功"
   fi
+  return ${ret}
+}
 
+start_mapred_tasktracker_remote()
+{
   ssh "${1}" "service hadoop-0.20-mapreduce-tasktracker start" 1>/dev/null 2>&1
-  ret2=${?}
-  if [ ${ret2} -ne 0 ];then
+  ret=${?}
+  if [ ${ret} -ne 0 ];then
     eecho "${1} hadoop-0.20-mapreduce-tasktracker 启动失败"
   else
     echo "${1} hadoop-0.20-mapreduce-tasktracker 启动成功"
   fi
-  ret=${ret1}||${ret2}
-
   return ${ret}
 }
 
@@ -494,6 +547,8 @@ start_secondary_namenode()
   return ${ret}
 }
 
+
+# 下面的start XXX 直接代表启动集群中所有服务
 start_zookeeper()
 {
   start_zookeeper_local
@@ -516,9 +571,20 @@ start_hadoop()
     ret=${?}||${ret}
   done
   start_secondary_namenode ${SECONDARY_NAMENODE}
-
   return ${ret}
+}
 
+
+start_mapred_tracker()
+{
+  start_mapred_jobtracker_local
+  ret=$?
+  for host in ${DATANODES[@]};
+  do
+    start_mapred_tasktracker_remote ${host}
+    ret=${?}||${ret}
+  done
+  return ${ret}
 }
 
 

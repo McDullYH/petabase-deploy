@@ -515,7 +515,7 @@ fi
 
 echo "`date +%Y-%m-%d-%T`开始预安装"
 
-#iecho "配置SSH"
+iecho "配置SSH"
 ssh_auth
 
 check_install_redhat-lsb
