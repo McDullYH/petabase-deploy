@@ -1,0 +1,376 @@
+#/bin/bash
+
+# 本脚本用于动态增删petabase集群中的所有DataNode，实现petabase集群的动态扩/减
+
+
+
+
+source ./utils
+construct_soft_dict
+
+CUSTOM_FILE=""
+in_datanodes=""
+
+HELP="flase"
+
+
+show_usage(){
+  cat <<EOF
+
+  usage: $0 COMMAND OPTIONS
+
+  COMMAND CAN BE
+  add-nodes start  	To add a host in to current petabase cluster
+  delete-nodes  	To move out a host from current petabase cluster
+  eraser-nodes  	To move out a host from current petabase cluster and uninstall its petabase component
+
+  OPTIONS CAN BE:
+
+  SPECIFY THE DATANODE
+  	$0 {-n|--nodes} [datanode list] 
+	The datanode list should be separated by ',', just like host1,host2,host3
+
+  USE FILE TO SPECIFY THE DATANODE AND NAMENODE
+  	$0 {-f|--nodes-file} [filepath]
+
+  The file format *MUST* be like following:
+  	eg:
+  	#file specify the datanodes and the second-namenode
+	datanodes:
+	esen-petabase-234,esen-petabase-235
+        DON'T forget the ":" ! And the last 's' after 'datanodes'
+
+  SHOW THIS HELP
+  	$0 {-h|--help} 
+
+  e.g. $0 add-nodes -n esen-petabase-234,esen-petabase-235 
+  e.g. $0 delete-nodes -f your_file
+  e.g. $0 eraser-nodes -f your_file
+
+EOF
+exit 1
+}
+
+
+config_arg_check()
+{
+  if [ ${operate}x = ""x ];then
+    wecho "请指定一个操作类型 add-nodes/delete-nodes/eraser-nodes"
+    return 1
+  elif [ ${operate}x != "add-nodes"x ] && [ ${operate}x != "delete-nodes"x ] && [ ${operate}x != "eraser-nodes"x ];then
+    wecho "不支持的操作类型  '${operate}' "
+    return 1
+  fi
+  return 0
+}
+
+
+
+# 字符串操作函数，接收2个参数
+# 例如： 
+# remove_datanodes "123,345,789,112235,3456,567,443,445" "789,445,123"
+# 则结果为 "345,112235,3456,567,443"
+# 注意，删除了中间的连续2个"," 和 首尾的 ","
+# 可以使用py来做，如果这个有bug的话
+remove_datanodes()
+{
+  local _datanodes=$1
+  local _delete_datanodes=$2
+
+  for host in ${_delete_datanodes[@]};
+  do
+    _datanodes=${_datanodes/${host}/}
+
+    # if middle
+    _datanodes=${_datanodes/,,/,}
+    # if start
+    _datanodes=${_datanodes#,}
+    # if end
+    _datanodes=${_datanodes%,}
+  done
+  echo "${_datanodes}"
+}
+
+# 该函数测试是否所有新增节点都不在当前集群中（是否存在交集）,都不在才能add
+# 返回存在于当前集群节点的个数
+# shell 操作太麻烦，使用外部的python
+count_intersection()
+{ 
+  python utils.py count_intersection "$1" "$2"
+}
+
+# 该函数测试是否所有新增节点都在当前集群中（删除节点是否为本集群子集）,都在才能add
+# 都在返回1  否则返回0
+test_subset()
+{ 
+  python utils.py test_subset "$1" "$2"
+}
+
+
+operate_add_nodes()
+{
+ local new_datanodes=$1
+
+ count_intersection "${DATANODES},`hostname`" "${new_datanodes}"
+ if [[ $? != 0 ]];then
+   wecho "存在已在集群中的节点!" 
+   exit 1
+ fi
+
+ # 1. do precondition first
+ ssh_auth "${new_datanodes}"
+
+ check_install_redhat-lsb_datanode "${new_datanodes}"
+
+ copy_esen_software "${new_datanodes}"
+
+ set_time_zone_datanode "${new_datanodes}"
+
+ check_and_install_necessary_datanode_from_rpm_list "${new_datanodes}"
+
+ configure_iptables_datanode  "${new_datanodes}"
+
+ # 2. then do acturally install
+
+
+ check_datanode_user-group "${new_datanodes}"
+
+ get_mysql_root_passwd
+
+ check_and_install_datanode_from_rpm_list "${new_datanodes}"
+
+ iecho "停止原集群所有服务"
+ ./petabase-service  stop -y
+
+ # 传入新node
+ # update_configure_file "${new_datanodes}"
+
+ # 仅仅新node
+ conf_datanode_bigtop-utils "${new_datanodes}"
+ prepare_use_hadoop_datanode "${new_datanodes}"
+ prepare_use_mapred_datanode  "${new_datanodes}"
+ prepare_use_hive_datanode "${new_datanodes}"
+
+ generate_host_info "${DATANODES},${new_datanodes}" "${SECONDARY_NAMENODE}"
+
+ # 这句之后 ，DATANODES改变，即新集群所有的datanode
+ construct_host_info
+
+ # 配置文件
+ init_configure_file "${DATANODES}" "${SECONDARY_NAMENODE}" "${mysql_root_passwd}"
+ copy_xml_namenode
+ copy_xml_datanode "${DATANODES}"
+ 
+ init_zookeeper_datanode "${DATANODES}"
+
+ fix_new_datanode_VERSION_file "${new_datanodes}"
+
+ start_zookeeper
+ start_hadoop
+ start_mapred_tracker
+ start_hive
+ start_petabase
+
+}
+
+operate_delete_nodes()
+{
+
+ local delete_datanodes=$1
+ test_subset "${DATANODES}" "${delete_datanodes}"
+ if [[ $? != 1 ]];then
+   wecho "并非所有待删除节点都在本集群中"
+   exit 1
+ fi
+
+ iecho "删除节点"
+
+ get_mysql_root_passwd
+
+ ./petabase-service  stop -y
+
+ local left_datanodes=`remove_datanodes "${DATANODES}" "${delete_datanodes}"`
+
+ generate_host_info "${left_datanodes}" "${SECONDARY_NAMENODE}"
+ # 这句之后 ，DATANODES改变，即新集群所有的datanode
+ construct_host_info
+
+ init_configure_file "${DATANODES}" "${SECONDARY_NAMENODE}" "${mysql_root_passwd}"
+
+ copy_xml_namenode
+ copy_xml_datanode "${DATANODES}"
+ 
+ init_zookeeper_datanode "${DATANODES}"
+
+ start_zookeeper
+ start_hadoop
+ start_mapred_tracker
+ start_hive
+ start_petabase
+
+}
+
+
+operate_eraser_nodes()
+{
+
+ local eraser_datanodes=$1
+
+ test_subset "${DATANODES}" "${eraser_datanodes}"
+ if [[ $? != 1 ]];then
+   wecho "并非所有待删除节点都在本集群中"
+   exit 1
+ fi
+
+ iecho "擦除节点"
+ get_mysql_root_passwd
+
+ ./petabase-service  stop -y
+
+
+ delete_group-user_datanode "${eraser_datanodes}"
+
+ uninstall_datanode_from_rpm_list "${eraser_datanodes}"
+
+ local left_datanodes=`remove_datanodes "${DATANODES}" "${eraser_datanodes}"`
+
+ generate_host_info "${left_datanodes}" "${SECONDARY_NAMENODE}"
+ # 这句之后 ，DATANODES改变，即新集群所有的datanode
+ construct_host_info
+
+ init_configure_file "${DATANODES}" "${SECONDARY_NAMENODE}" "${mysql_root_passwd}"
+
+ copy_xml_namenode
+ copy_xml_datanode "${DATANODES}"
+ 
+ init_zookeeper_datanode "${DATANODES}"
+
+ start_zookeeper
+ start_hadoop
+ start_mapred_tracker
+ start_hive
+ start_petabase
+
+}
+
+show_config_operate()
+{
+  echo ""
+  iecho "操作类型:	${1}"
+  iecho "从机列表:	${2}"
+
+  iecho "输入 'YES' 以确认"
+  read  TOGO
+  if [ ${TOGO}x = "YES"x ];then
+    return 0;
+  else
+    iecho "操作取消"
+    exit 1;
+  fi
+}
+
+
+##########################################################################
+
+construct_host_info
+perm_check
+
+# first analsyse argument
+TEMP=`getopt -o n:f:hz:: -l nodes:,nodes-file:,help,z-long \
+     -n '错误的输入参数' -- "$@" `
+
+if [ $? != 0 ] ; then echo "您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
+if [ $# = 0 ] ; then echo "没有命令和参数,您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
+
+eval set -- "$TEMP"
+
+
+
+while true ; do
+  case "$1" in
+# c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
+     -n|--nodes) 
+       IFS=','; in_datanodes=$2;
+       #echo "Option $1's argument is $in_datanodes"; 
+       shift 2 ;;
+
+     -f|--nodes-file) 
+       CUSTOM_FILE=$2;
+       #echo "Option $1's argument is $CUSTOM_FILE"; 
+       if [ ! -r $CUSTOM_FILE ];then
+         wecho "文件 ${CUSTOM_FILE} 不存在或者不可读"
+	 exit 1
+       fi
+       while read LINE
+       do
+	 if [ ${LINE}x = "datanodes:"x ];then
+	 read LINE
+         IFS=','; in_datanodes=$LINE;
+	 fi
+	 done  <${CUSTOM_FILE}
+       shift 2 ;;
+
+     -h|--help)  
+       HELP=true;  
+       #echo "Option $1's argument is $HELP" ; 
+       shift ;;
+
+ #z has an optional argument. As we are in quoted mode,
+ #an empty parameter will be generated if its optional
+ #argument is not found.
+       -z|--z-long)
+       case "$2" in
+       "") echo "Option $1, no argument"; shift 2 ;;
+       *)  echo "Option $1's argument is $2" ; shift 2 ;;
+       esac ;;
+     --) shift ; break ;;
+     *) echo "Internal error!" ; exit 1 ;;
+  esac
+done
+
+if [ "${HELP}"x = "true"x ];then
+  show_usage
+  exit 0
+fi
+
+operate=${1}
+
+
+config_arg_check
+if [ $? = 1 ];then
+  exit 1
+fi
+
+test_connect_datanode "${in_datanodes}"
+
+show_config_operate "${operate}" "${in_datanodes}"
+
+if [ -n "${operate}" ]; then
+  if [ "${operate}"x = "add-nodes"x ]; then
+    operate_add_nodes "${in_datanodes}"
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
+  elif [ "${operate}"x = "delete-nodes"x ]; then
+    operate_delete_nodes "${in_datanodes}"
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
+  elif [ "${operate}"x = "eraser-nodes"x ]; then
+    operate_eraser_nodes "${in_datanodes}"
+    if [ $? = 1 ];then
+      exit 1
+    fi
+  else
+    echo "目前尚不支持 ${operate} 操作"
+  fi
+else
+  echo "您没有输入任何命令"
+  exit 1
+fi
+
+# 负载均衡
+conf_haproxy "${DATANODES}"
+restart_haproxy

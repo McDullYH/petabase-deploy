@@ -5,21 +5,17 @@
 # 对于某个host某个服务的控制可能用的不多，要么是全部一起启动，停止，要么就会ssh到具体的host来进行具体的服务操作
 source ./utils
 
-MASTER_HOST="`hostname`"
-real_usr="`whoami`"
-
 
 CUSTOM_FILE=""
 datanodes=""
-servicelist=""
+service_list=""
 secondary_namenode=""
 include_master="否"
 
-check_usr="root"
-if [ "${real_usr}" != "${check_usr}" ]; then
-  echo "必须使用 $check_usr 来操作本脚本"
-  exit 1
-fi
+HELP=""
+
+# For control script with no confirm
+YES=""
 
 show_usage(){
   cat <<EOF
@@ -88,6 +84,23 @@ EOF
 exit 1
 }
 
+show_service_operate()
+{
+  iecho "操作类型:		${1}"
+  iecho "是否操作主机:		${2}"
+  iecho "从机列表:		${3}"
+  iecho "第二主机:		${4}"
+  iecho "要控制的服务列表 	${5}"
+
+  iecho "输入 'YES' 以确认"
+  read  TOGO
+  if [ ${TOGO}x = "YES"x ];then
+    return 0;
+  else
+    iecho "操作取消"
+    exit 1;
+  fi
+}
 
 
 service_arg_check()
@@ -108,18 +121,18 @@ service_arg_check()
 # 第四个参数，服务列表
 start_arg()
 {
-  _include_master=${1}
-  _datanodes=${2}
-  _secondary_namenode=${3}
-  _servicelist=${4}
+  local _include_master=${1}
+  local _datanodes=${2}
+  local _secondary_namenode=${3}
+  local _servicel_ist=${4}
 
-  show_service_operate "start" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_servicelist}"
+  show_service_operate "start" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_service_list}"
   if [ $? != 0 ];then
     exit 1;
   fi
 
   # 5个参数必须全，这样可以大大简化代码
-  echo "${_servicelist}" | grep -q "\<zookeeper\>"
+  echo "${_service_list}" | grep -q "\<zookeeper\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       start_zookeeper_local
@@ -132,7 +145,7 @@ start_arg()
     fi
   fi
 
-  echo "${_servicelist}" | grep -q "\<hadoop\>"
+  echo "${_service_list}" | grep -q "\<hadoop\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
     # TODO  包括了 hadoop和mapred
@@ -145,7 +158,7 @@ start_arg()
       do
       # TODO  包括了 hadoop和mapred
        start_hadoop_remote ${host}
-       start_mapred_tasktracker_local ${host}
+       start_mapred_tasktracker_remote ${host}
       done
     fi
     if [ -n "${_secondary_namenode}"  ]; then
@@ -153,14 +166,14 @@ start_arg()
     fi
   fi
 
-  echo "${_servicelist}" | grep -q "\<hive\>"
+  echo "${_service_list}" | grep -q "\<hive\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       start_hive_local
     fi
   fi
 
-  echo "${_servicelist}" | grep -q "\<petabase\>"
+  echo "${_service_list}" | grep -q "\<petabase\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       start_petabase_local
@@ -179,14 +192,16 @@ start_arg()
 
 stop_arg()
 {
-  _include_master=${1}
-  _datanodes=${2}
-  _secondary_namenode=${3}
-  _servicelist=${4}
+  local _include_master=${1}
+  local _datanodes=${2}
+  local _secondary_namenode=${3}
+  local _service_list=${4}
 
-  show_service_operate "stop" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_servicelist}"
+  if [[ -z "${YES}" ]];then
+    show_service_operate "stop" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_service_list}"
+  fi
 
-  echo "${_servicelist}" | grep -q "\<petabase\>"
+  echo "${_service_list}" | grep -q "\<petabase\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       stop_petabase_local
@@ -199,14 +214,14 @@ stop_arg()
     fi
   fi
 
-  echo "${_servicelist}" | grep -q "\<hive\>"
+  echo "${_service_list}" | grep -q "\<hive\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       stop_hive_local
     fi
   fi
 
-  echo "${_servicelist}" | grep -q "\<hadoop\>"
+  echo "${_service_list}" | grep -q "\<hadoop\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       stop_hadoop_local
@@ -222,7 +237,7 @@ stop_arg()
     fi
   fi
 
-  echo "${_servicelist}" | grep -q "\<zookeeper\>"
+  echo "${_service_list}" | grep -q "\<zookeeper\>"
   if [ $? -eq 0 ];then
     if [ "${_include_master}"x = "是"x ]; then
       stop_zookeeper_local
@@ -243,18 +258,27 @@ stop_arg()
 operate_start()
 {
 
-  cat <<EOF
+    local _include_master=$1
+    local _datanodes=$2
+    local _secondary_namenode=$3
+    local _service_list=$4
+
+      if [[ -n "${_service_list}" ]];then
+      cat <<EOF
       petabse 4 个组件的启动是有依赖关系的，一般来说是zookeeper-->hadoop-->hive-->petabase的顺序
 
       即 如果hive相关没有正确启动，petabase服务是无法启动的(比如catalog)
       但 其中少许一些服务如(datanode)没有正确启动，又不会影响后面的服务
 
       总之
-      如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service.sh 是最好的选择
+      如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service start 是最好的选择
       当然，如果您非常清楚他们之间的关系，登录到相应的机器进行控制也是非常好的选择
 
-      建议您在执行本操作前，首先使用 ./petabase-service.sh status 来查看相应的状态
+      建议您在执行本操作前，首先使用 ./petabase-service status 来查看相应的状态
 EOF
+      else
+       _service_list=${SERVICE_LIST}
+      fi
 
      iecho "输入 'YES' 以确认继续操作"
      read  TOGO
@@ -262,25 +286,11 @@ EOF
        exit 0;
      fi
 
-      if [[ -n "${servicelist}" ]];then
-      	echo "not none"
-      else
-      	echo "none"
-      fi
+    if [[ -z "${_datanodes}" ]] && [[ -z "${_secondary_namenode}" ]] && [[  "${_include_master}" = "否" ]]; then
+      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${_service_list}"
 
-    if [[ -z "${servicelist}" ]];then
-      servicelist=${SERVICE_LIST}
-    fi
-
-
-    if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
-      # 使用DATANODES 和SECONDARY_NAMENODE 来控制所有服务
-      iecho "操作所有主机所有服务"
-      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
-
-    # 指定了服务 且指定了任意一种主机
-    elif [[ -n "${datanodes}" ]] || [[ -n "${secondary_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
-      start_arg "${include_master}" "${datanodes}" "${secondary_namenode}"  "${servicelist}"
+    elif [[ -n "${_datanodes}" ]] || [[ -n "${_secondary_namenode}" ]] || [[ "${_include_master}" = "是" ]] ;then 
+      start_arg "${_include_master}" "${_datanodes}" "${_secondary_namenode}"  "${_service_list}"
 
     else
       echo "不支持的参数形式，请联系管理员"
@@ -288,24 +298,27 @@ EOF
     fi
     return 0
 
+
+
 }
 
 
 operate_stop()
-{
+{   
+    local _include_master=$1
+    local _datanodes=$2
+    local _secondary_namenode=$3
+    local _service_list=$4
 
-    if [[ -z "${servicelist}" ]];then
-      servicelist=${SERVICE_LIST}
+    if [[ -z "${_service_list}" ]];then
+      _service_list=${SERVICE_LIST}
     fi
 
-    if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
-      # 使用DATANODES 和SECONDARY_NAMENODE 来控制所有服务
-      iecho "操作所有主机所有服务"
-      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${servicelist}"
+    if [[ -z "${_datanodes}" ]] && [[ -z "${_secondary_namenode}" ]] && [[  "${_include_master}" = "否" ]]; then
+      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${_service_list}"
 
-    # 指定了服务 且指定了任意一种主机
-    elif [[ -n "${datanodes}" ]] || [[ -n "${secondary_namenode}" ]] || [[ "${include_master}" = "是" ]] ;then 
-      stop_arg "${include_master}" "${datanodes}" "${secondary_namenode}"  "${servicelist}"
+    elif [[ -n "${_datanodes}" ]] || [[ -n "${_secondary_namenode}" ]] || [[ "${_include_master}" = "是" ]] ;then 
+      stop_arg "${_include_master}" "${_datanodes}" "${_secondary_namenode}"  "${_service_list}"
 
     else
       echo "不支持的参数形式，请联系管理员"
@@ -326,7 +339,10 @@ operate_status()
 }
 ######################################################################################
 
-TEMP=`getopt -o n:d:s:f:mhz:: -l nodes:,secondary-namenode:,nodes-file:,master,service:,help,z-long \
+construct_host_info
+perm_check
+
+TEMP=`getopt -o n:d:s:f:mhyz:: -l nodes:,secondary-namenode:,nodes-file:,master,service:,help,yes,z-long \
      -n '错误的输入参数' -- "$@" `
 
 if [ $? != 0 ] ; then echo "您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
@@ -374,8 +390,8 @@ while true ; do
        shift ;;
 
      -d|--service)
-       IFS=','; servicelist=$2;
-       echo "Option $1's argument is $servicelist"; 
+       IFS=','; service_list=$2;
+       echo "Option $1's argument is $service_list"; 
        shift 2 ;;
 
      -h|--help)  
@@ -383,6 +399,10 @@ while true ; do
        #echo "Option $1's argument is $HELP" ; 
        shift ;;
 
+     -y|--yes)  
+       YES=true;  
+       #echo "Option $1's argument is $YES" ; 
+       shift ;;
  #z has an optional argument. As we are in quoted mode,
  #an empty parameter will be generated if its optional
  #argument is not found.
@@ -406,7 +426,6 @@ if [ "${HELP}"x = "true"x ];then
   exit 0
 fi
 
-construct_host_info
 
 operate=${1}
 
@@ -416,31 +435,31 @@ if [ $? = 1 ];then
 fi
 
 
+test_connect_datanode "${datanodes}"
 
 if [ -n "${operate}" ]; then
   if [ "${operate}"x = "start"x ]; then
-    operate_start
+    operate_start "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
     if [ $? = 1 ];then
       exit 1
     fi
 
   elif [ "${operate}"x = "stop"x ]; then
-    operate_stop
+    operate_stop "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
     if [ $? = 1 ];then
       exit 1
     fi
 
 
   elif [ "${operate}"x = "restart"x ]; then
-    operate_stop
+    operate_stop "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
     if [ $? = 1 ];then
       exit 1
     fi
-    operate_start
+    operate_start "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
     if [ $? = 1 ];then
       exit 1
     fi
-
 
   elif [ "${operate}"x = "status"x ]; then
      operate_status

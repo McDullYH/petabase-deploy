@@ -1,18 +1,161 @@
+CentOS 6.x  x84_64
 装机完成之后
 
-1.更新
+1.更新系统(可选，建议执行)
 yum update
 
-2.配置集群网络环境
-本机IP
-hostname
-hosts文件
-安装redhat-lsb
+
+2.配置集群网络环境(必须执行)
+
+2.1 配置集群所有节点的IP,一般是 /etc/sysconfig/network-scripts/ifcfg-eth0
+例子：
+DEVICE="eth0"
+BOOTPROTO="none"
+HWADDR="00:0C:29:E4:AC:10"
+IPV6INIT="no"
+NM_CONTROLLED="yes"
+ONBOOT="yes"
+IPADDR=172.21.1.233
+NETMASK=255.255.0.0
+TYPE=Ethernet
+GATEWAY=172.21.0.254
+DNS1=202.103.24.68
+USERCTL=no
+注意：DNS服务器和GATEWAY等信息请询问部署地网管
+设置完成之后 service network restart
+
+2.2 设置集群所有节点的hostname,修改/etc/sysconfig/network文件即可
+例子：
+NETWORKING=yes
+#HOSTNAME=localhost.localdomain
+HOSTNAME=last-233
+
+2.3 修改集群所有节点的hosts文件
+例子：
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+
+172.21.1.233 last-233
+172.21.1.234 last-234
+172.21.1.235 last-235
+
+
+特别提示:
+集群群中所有的主机都要进行以上3个设置
+每个主机的IP和hostname必须是不一样的，/etc/hosts文件应该是一样的
+主机名一定不要有下划线，尽量只使用字母，数字，英文横杠
+
+
+3 安装redhat-lsb （必须！）
+如果有网络环境
 yum install -y redhat-lsb
+如果没有，请使用CentOS 6.x的安装盘安装
 
-3.保证主机和各个从机的ssh畅通，不畅通也行，只是多次输入密码非常麻烦
+4.使用petabase-precondition脚本安装组件必要依赖等
+5.使用petabase-deploy脚本搭建petabase集群环境
 
-
+6.使用petabase-service脚本控制集群中的服务
+7.使用petabase-config脚本动态改变集群规模
 
 注意：
-如果不是非常了解petabase的结构，请不要尝试编辑任何文件
+如果不是非常了解petabase的结构，请不要尝试本目录编辑任何文件
+
+
+
+下面最后是一个示例:
+假设我有3个主机的集群
+第一个主机的
+/etc/sysconfig/network-scripts/ifcfg-eth0
+
+DEVICE="eth0"
+BOOTPROTO="none"
+HWADDR="00:0C:29:E4:AC:10"
+IPV6INIT="no"
+NM_CONTROLLED="yes"
+ONBOOT="yes"
+IPADDR=172.21.1.233
+NETMASK=255.255.0.0
+TYPE=Ethernet
+GATEWAY=172.21.0.254
+DNS1=202.103.24.68
+USERCTL=no
+
+第一个主机的
+/etc/sysconfig/network
+NETWORKING=yes
+HOSTNAME=last-233
+
+后文叫他last-233
+
+
+第二个主机的
+/etc/sysconfig/network-scripts/ifcfg-eth0
+
+DEVICE="eth0"
+BOOTPROTO="none"
+HWADDR="09:0C:27:E4:AC:10"
+IPV6INIT="no"
+NM_CONTROLLED="yes"
+ONBOOT="yes"
+IPADDR=172.21.1.234
+NETMASK=255.255.0.0
+TYPE=Ethernet
+GATEWAY=172.21.0.254
+DNS1=202.103.24.68
+USERCTL=no
+
+第二个主机的
+/etc/sysconfig/network
+NETWORKING=yes
+HOSTNAME=last-234
+
+后文叫他last-234
+
+第三个主机的
+/etc/sysconfig/network-scripts/ifcfg-eth0
+
+DEVICE="eth0"
+BOOTPROTO="none"
+HWADDR="09:08:29:E8:A7:10"
+IPV6INIT="no"
+NM_CONTROLLED="yes"
+ONBOOT="yes"
+IPADDR=172.21.1.234
+NETMASK=255.255.0.0
+TYPE=Ethernet
+GATEWAY=172.21.0.255
+DNS1=202.103.24.68
+USERCTL=no
+
+第二个主机的
+/etc/sysconfig/network
+NETWORKING=yes
+HOSTNAME=last-235
+
+后文叫他last-235
+
+
+这三个主机有着同一个 /etc/hosts
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+
+172.21.1.233 last-233
+172.21.1.234 last-234
+172.21.1.235 last-235
+
+
+确定无误之后
+
+1. 在3台主机上面均执行 yum install -y redhat-lsb
+2. 拷贝zip包到last-233，并解压
+3. 在last-233上面运行 ./petabase-precondition -n last-234,last-235
+4. 在last-233上面运行 ./petabase-deploy install -n last-234,last-235 -s last-234
+至此，petabase集群安装完成
+
+您可以在任意一个安装了 petabase-shell的主机测试
+petabase-shell
+进入petabse的shell环境之后
+connect last-234;
+show databases;
+show tables;
+如果无误，petabase集群即安装完成

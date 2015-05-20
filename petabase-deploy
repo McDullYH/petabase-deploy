@@ -26,9 +26,10 @@
 # 注意，所有对namenode操作应该在datanode之间
 
 
-
 # import temp variable
 source ./utils
+construct_soft_dict
+
 
 # 用户输入
 HELP=false
@@ -90,47 +91,25 @@ exit 1
 }
 
 
-
-generate_configure_file()
+show_deploy_operate()
 {
-  iecho "开始生成配置文件"
-  # 注意双引号不能省，特别是 datanodes的双引号，否则不会带逗号
-  _datanodes=$2
-  _secondary_namenode=$3
-  _mysql_root_passwd=$4
-  python xml-handle.py ${1} `hostname` "${_datanodes}" "${_secondary_namenode}" "${_mysql_root_passwd}"
+  iecho "操作类型:	${1}"
+  iecho "从机列表:	${2}"
+  iecho "第二主机:	${3}"
+
+  iecho "输入 'YES' 以确认"
+  read  TOGO
+  if [ ${TOGO}x = "YES"x ];then
+    return 0;
+  else
+    iecho "操作取消"
+    exit 1;
+  fi
 }
 
 
-# 后期进行节点的增删的时候还需要修改此文件，可能会使用xml来操作
-generate_host_info()
-{
-#  iecho "开始生成节点信息"
-#  # 第一个是 >  很关键!
-#  echo "second-name-node:" > ${HOST_INFO_FILE}
-#  echo "${secondary_namenode}" >> ${HOST_INFO_FILE}
-#  echo "datanodes:" >> ${HOST_INFO_FILE}
-#  echo "${datanodes}" >> ${HOST_INFO_FILE}
 
 
-  _datanodes=$1
-  _secondary_namenode=$2
-# use xml not normal file now
-# 这一段重复打开，关闭文件，其实可以交给 xml-handle.py init 一次来做，不过当前这样结构会更清晰
-  python xml-handle.py set namenode `hostname`
-  python xml-handle.py set datanodes "${_datanodes}"
-  python xml-handle.py set secondary-namenode "${_secondary_namenode}" 
-}
-
-
-clean_host_info()
-{
-  iecho "清理节点信息"
- # > ${HOST_INFO_FILE}
-  python xml-handle.py set namenode " "
-  python xml-handle.py set datanodes " "
-  python xml-handle.py set secondary-namenode  " "
-}
 
 # now install jdk by rpm
 install_jdk()
@@ -232,8 +211,10 @@ install_secondarynamenode()
 echo_check_summary()
 {
 
-  _datanodes=$1
-  iecho  "\n\n本机的检查报告:"
+  local _datanodes=$1
+  local _secondary_namenode=$1
+  echo -e "\n\n"
+  iecho  "本机的检查报告:"
   if [[ -n "${namenode_deps_soft_dict}" ]]; then
     echo "本机缺少必要依赖如下:"
     for deps_soft in ${namenode_deps_soft_dict};do
@@ -256,7 +237,8 @@ echo_check_summary()
 
 
   for host in ${_datanodes[@]}; do
-    iecho  "\n\n${host}的检查报告："
+    echo -e "\n\n"
+    iecho  "${host}的检查报告："
     if [[ -n "${datanode_deps_soft_dict[${host}]}" ]]; then
       echo "$host缺少必要依赖如下:"
     for deps_soft in ${datanode_deps_soft_dict[${host}]};do
@@ -281,7 +263,8 @@ echo_check_summary()
   done
 
 
-  iecho  "\n\n第二主机(${secondary_namenode})的检查报告:"
+  echo -e "\n\n"
+  iecho  "第二主机(${_secondary_namenode})的检查报告:"
   if [[ -n "${secnamenode_installed_soft_dict}" ]]; then
     echo "第二主机安装了如下组件"
     for installed_soft in ${secnamenode_installed_soft_dict};do
@@ -397,7 +380,7 @@ check_soft_namenode()
 check_soft_datanodes()
 {
 
-  _datanodes=$1
+  local _datanodes=$1
   for host in ${_datanodes[@]}; do
 
   iecho "开始检查${host} 上petabase 依赖的安装情况"
@@ -470,12 +453,12 @@ check_soft_datanodes()
 
 check_soft_secondarynamenode()
 {
-
-  iecho "开始检查第二主机 ${secondary_namenode} 上petabase 相关组件是否已经安装"
+  iecho "开始检查第二主机 ${_secondary_namenode} 上petabase 相关组件是否已经安装"
+  local _secondary_namenode=$1
   for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
-    check_install_remote ${secondary_namenode} ${key}
+    check_install_remote ${_secondary_namenode} ${key}
     if [ $? = 0 ];then
-      installed_pkg_name=`ssh ${secondary_namenode} rpm -q ${key}`
+      installed_pkg_name=`ssh ${_secondary_namenode} rpm -q ${key}`
       secnamenode_installed_soft_dict=${secnamenode_installed_soft_dict}"${installed_pkg_name},"
       is_ready="false"
     fi
@@ -493,222 +476,7 @@ check_soft_secondarynamenode()
 
 }
 
-
-
-#这个环境变量必须设置！！
-conf_namenode_bigtop-utils()
-{
-  iecho "正在配置本机bigtop..."
-  echo "export JAVA_HOME=$java_dir" >> /etc/default/bigtop-utils
-}
-
-
-conf_datanode_bigtop-utils()
-{
-  _datanodes=$1
-  for host in ${_datanodes[@]}; do
-  iecho "正在配置 ${host} 上的 bigtop..."
-    scp  /etc/default/bigtop-utils $host:/etc/default/ 1>/dev/null 2>&1
-    ssh  "{$host}" "chown root:root /etc/default/bigtop-utils" 1>/dev/null 2>&1
-  done
-}
-
-
-
-# 后期提供更精细的拷贝
-prepare_use_hadoop_namenode()
-{
-  # namenode
-  iecho "开始准备使用 namenode"
-  rm -rf /etc/hadoop/conf.my_cluster
-  cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster
-  alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50
-  alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster
-
-  # show info
-  #alternatives --display hadoop-conf
-
-  rm -rf /data
-  mkdir -p /data/1/dfs/nn
-  chmod 700 /data/1/dfs/nn
-  chown -R hdfs:hdfs /data/1/dfs/nn
-
-
-  # 服务启动之前，配置文件拷贝之后
-}
-
-
-prepare_use_hadoop_datanode()
-{
-  _datanodes=$1
- 
-  # datanodes
-  for host in ${_datanodes[@]}; do
-    ssh  $host "rm -rf /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
-    ssh  $host "cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
-    ssh  $host "alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50" 1>/dev/null 2>&1
-    ssh  $host "alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster" 1>/dev/null 2>&1
-
-    # show info
-    #ssh  $host "alternatives --display hadoop-conf"
-  done
-
-
-  # slaves node
-  for node in ${DATANODES[@]}; do
-    ssh  $node "rm -rf /data"
-    ssh  $node "mkdir -p /data/1/dfs/dn /data/2/dfs/dn /data/3/dfs/dn"
-    ssh  $node "chown -R hdfs:hdfs /data/1/dfs/dn /data/2/dfs/dn /data/3/dfs/dn"
-  done
-
-}
-
-
-copy_xml_namenode()
-{
-  # zookeeper
-  cp -f ${CONFIGURATION_DIR}/zookeeper/zoo.cfg /etc/zookeeper/conf/zoo.cfg
-  # hadoop
-  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/core-site.xml /etc/hadoop/conf.my_cluster/
-  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/
-  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/
-
-  # TODO no need? 曾经有一个集群 datanodes slaves里面存的localhost 
-  #cp -f ${CONFIGURATION_DIR}/hadoop/masters /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-  #cp -f ${CONFIGURATION_DIR}/hadoop/slaves /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-
-  cp -f ${CONFIGURATION_DIR}/hadoop/hadoop /etc/default/hadoop
-  # hive
-  cp -f ${CONFIGURATION_DIR}/hive/hive-site.xml /etc/hive/conf/
-  # petabase
-
-  # TODO 做一个简单的替换就行了
-  sed -i "s/127.0.0.1/$MASTER_HOST/g" /etc/default/impala
-
-  cp -f ${CONFIGURATION_DIR}/petabase/core-site.xml /etc/impala/conf/
-  cp -f ${CONFIGURATION_DIR}/petabase/hdfs-site.xml /etc/impala/conf/
-  cp -f ${CONFIGURATION_DIR}/petabase/hive-site.xml /etc/impala/conf/
-}
-
-copy_xml_datanode()
-{
-  _datanodes=$1
-  for host in ${_datanodes[@]}; do
-    # zookeeper
-    scp  /etc/zookeeper/conf/zoo.cfg $host:/etc/zookeeper/conf/ 
-    # hadoop
-    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/core-site.xml $host:/etc/hadoop/conf.my_cluster/
-    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/
-    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/
-
-    # TODO no need? 曾经有一个集群 datanodes slaves里面存的localhost 
-    #scp  /etc/hadoop/conf.my_cluster/masters $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-    #scp  /etc/hadoop/conf.my_cluster/slaves $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
-
-    scp  /etc/default/hadoop $host:/etc/default/
-    ssh  $host "chown root:root /etc/default/hadoop"
-    # hive
-    scp  /etc/hive/conf/hive-site.xml $host:/etc/hive/conf/
-    # petabase
-    scp  /etc/default/impala $host:/etc/default/
-    scp  /etc/impala/conf/core-site.xml $host:/etc/impala/conf/
-    scp  /etc/impala/conf/hdfs-site.xml $host:/etc/impala/conf/
-    scp  /etc/impala/conf/hive-site.xml $host:/etc/impala/conf/
-    ssh  $host "chown -R root:root /etc/impala/conf"
-    ssh  $host "chown root:root /etc/default/impala"
-  done
-}
-
-prepare_use_hive_namenode()
-{
-  cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib
-
-  # TODO 貌似没有这个文件
-  #cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib
-  usermod -a -G hadoop petabase
-  usermod -a -G hive petabase
-  usermod -a -G hdfs petabase
-}
-
-
-
-prepare_use_hive_datanode()
-{
-  _datanodes=$1
-  for host in ${_datanodes[@]}; do
-    ssh  $host "cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib"
-
-    # TODO 貌似原来也没有这个文件，只是原来把输出重定向了...
-    #ssh  $host "cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib"
-    ssh  $host "usermod -a -G hadoop petabase"
-    ssh  $host "usermod -a -G hive petabase"
-    ssh  $host "usermod -a -G hdfs petabase"
-  done
-}
-
-
-# TODO 关于zookeeper 各个node安装的必要性须进一步核实
-init_zookeeper_namenode()
-{
-
-# 原来的逻辑突然出了问题，这里使用新的逻辑
-#  echo "[Log] zookeeper initialization"
-#  # master node
-#  echo "now in $MASTER_HOST"
-#  mkdir -p /var/lib/zookeeper
-#  chown -R zookeeper /var/lib/zookeeper/  
-#  # slaves node
-#  for node in ${datanodes[@]}; do
-#    if [ "${node}" != "${MASTER_HOST}" ]; then
-#      echo "now in $node"
-#
-#      ssh  "${node}"  "mkdir -p /var/lib/zookeeper"
-#      ssh  "${node}"  "chown -R zookeeper /var/lib/zookeeper/" 
-#    fi
-#  done  
-#
-#  # TODO is there any thing wrong?
-#  # read zoo.cfg to init zookeeper
-#  #cat /etc/zookeeper/conf/zoo.cfg | grep server |while read line
-#  cat /etc/zookeeper/conf/zoo.cfg | grep server | grep -P '^(?!#)' |while read line
-#  do
-#  echo $line
-#    # 冒号分开，取第一个；点好分开，取第二个；等号分开，取第一个
-#    number=`echo $line | awk -F ":" '{print $1}' | awk -F [.] '{print $2}' | awk -F [=] '{print $1}'`
-#    # 道理同上
-#    nodename=`echo $line | awk -F ":" '{print $1}' | awk -F [.] '{print $2}' | awk -F [=] '{print $2}'`
-#    echo $nodename myid is $number
-#
-#    # 这里远程操控本机了
-     # 不知为何，这里执行第一个ssh之后就退出
-#    ssh  ${nodename} "service zookeeper-server init --myid=$number"
-#  done
-
-
-# 使用host.info文件，务必保证host.info文件的信息是新的，--force参数可以保证所有host重新init
-  # master node
-  iecho "开始配置namenode上的zookeeper"
-  mkdir -p /var/lib/zookeeper
-  chown -R zookeeper /var/lib/zookeeper/  
-  service zookeeper-server init --force --myid=1
-}
-
-
-init_zookeeper_datanode()
-{
-  iecho "开始配置datanode上的zookeeper"
-  _datanodes=$1
-  i=2
-  # slaves node
-  for host in ${_datanodes[@]}; do
-      echo "${node}...."
-      ssh  "${host}"  "mkdir -p /var/lib/zookeeper"
-      ssh  "${host}"  "chown -R zookeeper /var/lib/zookeeper/" 
-      ssh  "${host}"  "service zookeeper-server init --force --myid=${i}"
-      let i=i+1
-  done  
-}
-
+# now not use
 init_start_hadoop()
 {
   echo "[Log] hadoop initialization"
@@ -786,42 +554,11 @@ init_start_hadoop()
 
 
 
-# mapred 特指 mapred V1  yarn 特指 mapred V2
-# 这个在启动服务hdfs之后调用
-prepare_use_mapred_namenode()
-{
-  mkdir -p /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
-  chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
-
-}
-
-init_mapred_tracker()
-{
-  sudo -u hdfs hadoop fs -mkdir /tmp
-  sudo -u hdfs hadoop fs -chmod -R 1777 /tmp
-
-  sudo -u hdfs hadoop fs -mkdir -p /var/lib/hadoop-hdfs/cache/mapred/mapred/staging
-  sudo -u hdfs hadoop fs -chmod 1777 /var/lib/hadoop-hdfs/cache/mapred/mapred/staging
-  sudo -u hdfs hadoop fs -chown -R mapred /var/lib/hadoop-hdfs/cache/mapred
-  sudo -u hdfs hadoop fs -mkdir -p /tmp/mapred/system
-  sudo -u hdfs hadoop fs -chown mapred:hadoop /tmp/mapred/system
-
-
-}
-
-prepare_use_mapred_datanode()
-{
-  for node in ${DATANODES[@]}; do
-    ssh  $node "mkdir -p /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local"
-    ssh  $node "chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local"
-  done
-}
 
 
 init_hive()
 {
-  echo "[Log] hive initialization"
-
+  iecho "初始化 hive hdfs环境"
   # hadoop fs  和 hdfs dfs 效果一样，后者较新，用后者
   sudo -u hdfs hdfs dfs -mkdir -p /user/hive/warehouse
   sudo -u hdfs hdfs dfs -chmod 777 /user
@@ -830,38 +567,9 @@ init_hive()
 }
 
 
-# 这个是全部重建，不是增删
-conf_haproxy() 
-{
- _datanodes=$1
- rm -f /etc/haproxy/haproxy.cfg
- cat HA.config.part1 >> /etc/haproxy/haproxy.cfg
- for host in ${_datanodes[@]}; do
-   echo "server ${host}_jdbc ${host}:21050" >>/etc/haproxy/haproxy.cfg
- done
- cat HA.config.part2 >> /etc/haproxy/haproxy.cfg
- for host in ${_datanodes[@]}; do
-   echo "server ${host}_shell ${host}:21000" >>/etc/haproxy/haproxy.cfg
- done
- service haproxy start
- chkconfig haproxy on
-}
 
 
-delete_group-user_namenode()
-{
-  userdel -r $PETA_USER 1>/dev/null 2>&1
-  groupdel $PETA_GRP 1>/dev/null 2>&1
-}
 
-delete_group-user_datanode()
-{
-  _datanodes=$1
-  for host in ${_datanodes[@]}; do
-    ssh  $host "userdel -r $PETA_USER" 1>/dev/null 2>&1
-    ssh  $host "groupdel $PETA_GRP" 1>/dev/null 2>&1
-  done
-}
 
 # not use now
 uninstall_soft_namenode()
@@ -931,202 +639,6 @@ uninstall_soft_secondarynamenode()
 }
 
 
-get_mysql_root_passwd()
-{
-  iecho "请输入mysql root用户的密码(组件hive 需要用到):"
-  #read -s mysql_root_passwd
-  # 其实不隐藏更好
-  read  mysql_root_passwd
-}
-
-
-# 关联数组无法作为参数传入，故而只能逐个处理，无法抽象为函数
-check_and_install_namenode_from_rpm_list()
-{
-  for key in ${!COMMON_SOFT_DICT[@]};do
-    check_install_local ${key}
-    if [ $? -eq 0 ]; then
-      installed_pkg_name=`rpm -q ${key}`
-      pkgname=`basename ${COMMON_SOFT_DICT[${key}]} .rpm`
-      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
-   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
-      else
-        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
-      fi
-    else
-      install_soft_local ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
-      if [ $? -ne 0 ]; then
-        eecho "在本机安装${pkgname}失败，请检查相关日志"
-        exit 1
-      fi
-    fi
-  done
-
-
-  for key in ${!NAMENODE_SOFT_DICT[@]};do
-    check_install_local ${key}
-    if [ $? -eq 0 ]; then
-      installed_pkg_name=`rpm -q ${key}`
-      pkgname=`basename ${NAMENODE_SOFT_DICT[${key}]} .rpm`
-      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
-   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
-      else
-        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
-      fi
-    else
-      install_soft_local ${NAMENODE_SOFT_DIR}/${NAMENODE_SOFT_DICT[${key}]}
-      if [ $? -ne 0 ]; then
-        eecho "在本机安装${pkgname}失败，请检查相关日志"
-        exit 1
-      fi
-    fi
-  done
-
-  for key in ${!EXT_SOFT_DICT[@]};do
-    check_install_local ${key}
-    if [ $? -eq 0 ]; then
-      installed_pkg_name=`rpm -q ${key}`
-      pkgname=`basename ${EXT_SOFT_DICT[${key}]} .rpm`
-      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
-   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
-      else
-        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
-      fi
-    else
-      install_soft_local ${EXT_SOFT_DIR}/${EXT_SOFT_DICT[${key}]}
-      if [ $? -ne 0 ]; then
-        eecho "在本机安装${pkgname}失败，请检查相关日志"
-        exit 1
-      fi
-    fi
-  done
-
-  return 0
-}
-
-check_and_install_datanode_from_rpm_list()
-{
-
- _datanodes=$1
- for host in ${_datanodes[@]}; do
-  for key in ${!COMMON_SOFT_DICT[@]};do
-    check_install_remote ${host} ${key}
-    if [ $? -eq 0 ]; then
-      installed_pkg_name=`ssh ${host} rpm -q ${key}`
-      pkgname=`basename ${COMMON_SOFT_DICT[${key}]} .rpm`
-      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
-   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
-      else
-        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
-      fi
-    else
-      install_soft_remote ${host} ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
-      if [ $? -ne 0 ]; then
-        eecho "在${host}安装${pkgname}失败，请检查相关日志"
-        exit 1
-      fi
-    fi
-  done
-
-  for key in ${!DATANODE_SOFT_DICT[@]};do
-    check_install_remote ${host} ${key}
-    if [ $? -eq 0 ]; then
-      installed_pkg_name=`ssh ${host} rpm -q ${key}`
-      pkgname=`basename ${DATANODE_SOFT_DICT[${key}]} .rpm`
-      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
-   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
-      else
-        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
-      fi
-    else
-      install_soft_remote ${host} ${DATANODE_SOFT_DIR}/${DATANODE_SOFT_DICT[${key}]}
-      if [ $? -ne 0 ]; then
-        eecho "在${host}安装${pkgname}失败，请检查相关日志"
-        exit 1
-      fi
-    fi
-  done
- done
- return 0
-}
-
-check_and_install_secnamenode_from_rpm_list()
-{
-  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
-    check_install_remote ${secondary_namenode} ${key}
-    if [ $? -eq 0 ]; then
-      installed_pkg_name=`ssh ${secondary_namenode} rpm -q ${key}`
-      pkgname=`basename ${SEC_NAMENODE_SOFT_DICT[${key}]} .rpm`
-      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
-   	iecho "${secondary_namenode}已经安装${installed_pkg_name}，不需要再次安装"
-      else
-        wecho "${secondary_namenode}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
-      fi
-    else
-      install_soft_remote ${secondary_namenode} ${SEC_NAMENODE_SOFT_DIR}/${SEC_NAMENODE_SOFT_DICT[${key}]}
-      if [ $? -ne 0 ]; then
-        eecho "在${secondary_namenode}安装${pkgname}失败，请检查相关日志"
-        exit 1
-      fi
-    fi
-  done
- return 0
-}
-
-
-# 不用做任何检查，直接卸载即可
-uninstall_namenode_from_rpm_list()
-{
-
-  for key in ${!NAMENODE_SOFT_DICT[@]};do
-    uninstall_soft_local ${key}
-  done
-
-  for key in ${!COMMON_SOFT_DICT[@]};do
-    uninstall_soft_local ${key}
-  done
-
-  for key in ${!EXT_SOFT_DICT[@]};do
-    uninstall_soft_local ${key}
-  done
-  rm -rf /var/lib/zookeeper
-  return 0
-}
-
-uninstall_datanode_from_rpm_list()
-{
-
- _datanodes=$1
- for host in ${_datanodes[@]}; do
-  for key in ${!COMMON_SOFT_DICT[@]};do
-    uninstall_soft_remote ${host} ${key}
-  done
-
-
-  for key in ${!DATANODE_SOFT_DICT[@]};do
-    uninstall_soft_remote ${host} ${key}
-  done
-
-  ssh "${host}" "rm -rf /var/lib/zookeeper"
- done
- return 0
-}
-
-uninstall_secnamenode_from_rpm_list()
-{
-  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
-    uninstall_soft_remote ${SECONDARY_NAMENODE} ${key}
-  done
- return 0
-}
-
-
 
 command_arg_check()
 {
@@ -1172,7 +684,9 @@ option_arg_check()
 
 ######################################################################################
 
-# first analsyse argument
+construct_host_info
+perm_check
+
 TEMP=`getopt -o n:s:f:hz:: -l nodes:,secondary-namenode:,nodes-file:,help,z-long \
      -n '错误的输入参数' -- "$@" `
 
@@ -1188,17 +702,14 @@ while true ; do
 # c 和 h 选项是没有参数的，如果使用了$2，会直接取下一个参数
      -n|--nodes) 
        IFS=','; datanodes=$2;
-       echo "Option $1's argument is $datanodes"; 
        shift 2 ;;
 
      -s|--secondary-namenode) 
        secondary_namenode=$2;
-       #echo "Option $1's argument is $secondary_namenode"; 
        shift 2 ;;
 
      -f|--nodes-file) 
        CUSTOM_FILE=$2;
-       #echo "Option $1's argument is $CUSTOM_FILE"; 
        if [ ! -r $CUSTOM_FILE ];then
          wecho "文件 ${CUSTOM_FILE} 不存在或者不可读"
 	 exit 1
@@ -1218,7 +729,6 @@ while true ; do
 
      -h|--help)  
        HELP=true;  
-       #echo "Option $1's argument is $HELP" ; 
        shift ;;
 
  #z has an optional argument. As we are in quoted mode,
@@ -1251,13 +761,13 @@ if [ $? = 1 ];then
   exit 1
 fi
 
+test_connect_datanode "${datanodes}"
+
 if [ ${operate}x = "install"x ];then
-  iecho "`date +%Y%m%d-%T` install begin"
+  iecho "`date +%Y%m%d-%T` 开始安装"
 
   show_deploy_operate "install" "${datanodes}" "${secondary_namenode}"
-  if [ $? = 1 ];then
-    exit 1;
-  fi
+
   option_arg_check
 
   check_namenode_user-group
@@ -1270,7 +780,7 @@ if [ ${operate}x = "install"x ];then
   #install_secondarynamenode
   check_and_install_namenode_from_rpm_list
   check_and_install_datanode_from_rpm_list "${datanodes}"
-  check_and_install_secnamenode_from_rpm_list
+  check_and_install_secnamenode_from_rpm_list "${secondary_namenode}"
 
 
   generate_host_info "${datanodes}" "${secondary_namenode}"
@@ -1282,7 +792,6 @@ if [ ${operate}x = "install"x ];then
   # 再次创建相当于更新
   # 后面不再使用 datanodes等 而是使用 DATANODES等 因为这已经不仅仅是install 而是 服务的 init了 虽然在这里， DATANODES和datanodes没有区别
 
-  iecho "开始配置petabase"
   # bigtop 是 cdh的依赖
   conf_namenode_bigtop-utils
   conf_datanode_bigtop-utils "${DATANODES}"
@@ -1295,12 +804,13 @@ if [ ${operate}x = "install"x ];then
 
 
   # 配置文件
-  generate_configure_file init "${DATANODES}" "${SECONDARY_NAMENODE}" "${mysql_root_passwd}"
+  init_configure_file "${DATANODES}" "${SECONDARY_NAMENODE}" "${mysql_root_passwd}"
   copy_xml_namenode
   copy_xml_datanode "${DATANODES}"
   
   # 负载均衡
   conf_haproxy "${DATANODES}"
+  start_haproxy
 
   # init and start
   init_zookeeper_namenode
@@ -1312,7 +822,9 @@ if [ ${operate}x = "install"x ];then
 
   start_hadoop
 
+  # 这个仅仅做一次，以后不用做
   init_mapred_tracker
+
   start_mapred_tracker
 
   # 启动配置放到一起，因为要对hdfs进行操作
@@ -1320,27 +832,19 @@ if [ ${operate}x = "install"x ];then
   #init_start_hadoop
 
   # hive 配置在namenode上面了，仅仅配置本机(namenode)即可
+  # 这个仅仅做一次，以后不用做
   init_hive
   start_hive
-
   start_petabase
-
-  iecho "`date +%Y%m%d-%T` finish"
-
 
 elif [ ${operate}x = "uninstall"x ];then
 
   show_deploy_operate "uninstall" "${DATANODES}" "${SECONDARY_NAMENODE}"
-  if [ $? = 1 ];then
-    exit 1;
-  fi
 
-  iecho "`date +%Y%m%d-%T` uninstall begin"
-  iecho "delete user and group"
+  iecho "`date +%Y%m%d-%T` 开始卸载"
 
   # first stop all service
-  iecho "即将自动停止所有服务，请按提示操作"
-  ./petabase-service stop
+  ./petabase-service stop -y
   if [ $? = 1 ];then
     exit 1
   fi
@@ -1348,23 +852,23 @@ elif [ ${operate}x = "uninstall"x ];then
   delete_group-user_namenode
   delete_group-user_datanode "${datanodes}"
 
-  iecho "uninstall software"
   uninstall_namenode_from_rpm_list
   uninstall_datanode_from_rpm_list "${DATANODES}"
-  uninstall_secnamenode_from_rpm_list
+  uninstall_secnamenode_from_rpm_list "${SECONDARY_NAMENODE}"
   clean_host_info
 
   #uninstall_soft_namenode
   #uninstall_soft_datanodes
   #uninstall_soft_secondarynamenode
-  iecho "`date +%Y%m%d-%T` finish"
+
 elif [ ${operate}x = "status"x ];then
   iecho "`date +%Y%m%d-%T` 开始检查安装环境..."
   check_soft_namenode
   check_soft_datanodes "${datanodes}"
-  check_soft_secondarynamenode
-  echo_check_summary "${datanodes}"
+  check_soft_secondarynamenode "${secondary_namenode}"
+  echo_check_summary "${datanodes}" "${secondary_namenode}"
 else
   echo "目前还不支持  ${operate}  操作..."
   exit 1;
 fi
+  iecho "`date +%Y%m%d-%T` 完成"

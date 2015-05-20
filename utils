@@ -2,30 +2,23 @@
 
 # shell 中 返回 0 表示成功 1表示失败
 # 使用alias简化命令  注意引号，一般都是单引号
+# local/remote  namenode/datanode的区别，前一对是一个host，后一对是一类host，可以认为local 和 namenode是等价的(因为当前默认本机就是namenode)
 
-
-#java_main=/usr/java
-#java_name=jdk1.7.0_45
-#java_dir=$java_main/$java_name
 # 最后必须没有斜杠 '/'
-java_dir=/usr/java/default
-
-PETA_USER="petabase"
-PETA_GRP="petabase"
-MASTER_HOST="`hostname`"
-
-
-real_usr="`whoami`"
-check_usr="root"
-if [ "${real_usr}" != "${check_usr}" ]; then
-  echo "The user must be $check_usr"
-  exit 0
-fi
-
+# 主体不给出log，各个做事的函数开头给出log
 
 #if [ -e "./ssh_config" ];then
 #  SSH_ARGS="-F ./ssh_config"
 #fi
+
+
+JAVA_DIR=/usr/java/default
+
+
+
+PETA_USER="petabase"
+PETA_GRP="petabase"
+MASTER_HOST="`hostname`"
 
 # change to esensoft-petabase dir
 SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
@@ -39,15 +32,12 @@ NESS_SOFT_DIR=$ESEN_PETA/ness-software
 EXT_SOFT_DIR=$ESEN_PETA/ext-software
 MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
 LXML_SOFT_DIR=$ESEN_PETA/lxml-software
-
 CONFIGURATION_DIR=$ESEN_PETA/sbin/configuration.ripe
 
 
 # 依然是逗号号分割
 HOST_INFO_FILE=$ESEN_PETA/sbin/host.info
 HOST_INFO_XML=$ESEN_PETA/sbin/host-info.xml
-DATANODES=""
-SECONDARY_NAMENODE=""
 SERVICE_LIST="zookeeper,hadoop,hive,petabase"
 
 
@@ -65,6 +55,34 @@ declare -A EXT_SOFT_DICT
 declare -A MYSQL_SOFT_DICT
 declare -A LXML_SOFT_DICT
 
+
+mysql_root_passwd=""
+
+
+perm_check()
+{
+  local current_usr="`whoami`"
+  local root_usr="root"
+  if [ "${current_usr}" != "${root_usr}" ]; then
+    echo "必须以 $root_usr 用户执行本脚本！"
+    exit 1
+  fi
+}
+
+ssh_auth()
+{
+  iecho "开始配置SSH"
+  if [ ! -r /root/.ssh/id_rsa ];then
+  ssh-keygen -t rsa;
+  fi
+  _datanodes=$1
+  for host in ${_datanodes[@]};do
+    echo "auth for $host"
+    ssh-copy-id $host
+  done
+}
+
+
 check_namenode_user-group()
 {
   iecho "正在检查本机  ${PETA_USER} 用户, ${PETA_GRP} 用户组 情况"
@@ -81,7 +99,7 @@ check_namenode_user-group()
 
 check_datanode_user-group()
 {
-  _datanodes=$1
+  local _datanodes=$1
   for host in ${_datanodes[@]}; do
   iecho "正在检查${host}上  ${PETA_USER} 用户, ${PETA_GRP} 用户组 情况"
   ssh  $host "id ${PETA_USER}" 1>/dev/null 2>&1
@@ -97,10 +115,24 @@ check_datanode_user-group()
 }
 
 
+test_connect_datanode()
+{
+  iecho "正在测试各datanode与本机之间是否连通"
+  local _datanodes=$1
+  for host in ${_datanodes[@]};
+  do
+    ping -c1 -w5 "${host}" 1>/dev/null  2>&1
+    if [[ $? != 0 ]];then
+     wecho "无法连接到${host},请检查网络设置"
+     exit 1
+    fi
+  done
+  return 0
+}
 
 construct_soft_dict()
 {
-
+  iecho "正在创建软件包列表信息"
   while read LINE
   do
   key=$LINE
@@ -152,8 +184,32 @@ construct_soft_dict()
   done < $LXML_SOFT_DIR/rpm.list
 }
 
+# variable
+DATANODES=""
+SECONDARY_NAMENODE=""
+
+generate_host_info()
+{
+#  iecho "开始生成节点信息"
+#  # 第一个是 >  很关键!
+#  echo "second-name-node:" > ${HOST_INFO_FILE}
+#  echo "${secondary_namenode}" >> ${HOST_INFO_FILE}
+#  echo "datanodes:" >> ${HOST_INFO_FILE}
+#  echo "${datanodes}" >> ${HOST_INFO_FILE}
 
 
+  iecho "正在生成节点信息文件"
+  local _datanodes=$1
+  local _secondary_namenode=$2
+# use xml not normal file now
+# 这一段重复打开，关闭文件，其实可以交给 xml-handle.py init 一次来做，不过当前这样结构会更清晰
+  python xml-handle.py set namenode `hostname`
+  python xml-handle.py set datanodes "${_datanodes}"
+  python xml-handle.py set secondary-namenode "${_secondary_namenode}" 
+}
+
+
+# 构造 SECONDARY_NAMENODE 和 DATANODES
 construct_host_info()
 {
 
@@ -175,17 +231,70 @@ construct_host_info()
 #  done  <${HOST_INFO_FILE}
 
 
+  iecho "正在载入节点信息"
   if [ ! -r ${HOST_INFO_XML} ];then
     wecho "集群节点信息文件 ${HOST_INFO_XML} 不存在"
     exit 1
   fi
 
-
   SECONDARY_NAMENODE=`python xml-handle.py get secondary-namenode`;
   IFS=','; DATANODES=`python xml-handle.py get datanodes`;
 
-
 }
+
+clean_host_info()
+{
+  iecho "正在清理节点信息"
+ # > ${HOST_INFO_FILE}
+  python xml-handle.py set namenode " "
+  python xml-handle.py set datanodes " "
+  python xml-handle.py set secondary-namenode  " "
+}
+
+
+init_configure_file()
+{
+  iecho "开始生成配置文件"
+  # 注意双引号不能省，特别是 datanodes的双引号，否则不会带逗号
+  local _datanodes=$1
+  local _secondary_namenode=$2
+  local _mysql_root_passwd=$3
+  python xml-handle.py init `hostname` "${_datanodes}" "${_secondary_namenode}" "${_mysql_root_passwd}"
+}
+
+update_configure_file()
+{
+  iecho "开始变更配置文件"
+  local _datanodes="${DATANODES},${1}"
+  local _secondary_namenode=$2
+  local _mysql_root_passwd=$3
+
+  python xml-handle.py update `hostname` "${_datanodes}" "${_secondary_namenode}" "${_mysql_root_passwd}"
+}
+
+
+get_mysql_root_passwd()
+{
+  iecho "请输入mysql root用户的密码(组件hive 需要用到):"
+
+  i=0
+  while [ $i -lt 3 ]
+  do
+  read -s mysql_root_passwd
+  mysql --user=root --password="${mysql_root_passwd}" --execute="show databases;" 1>/dev/null 2>&1
+  if [ $? = 0 ];then
+    return 0
+  else
+   echo "密码错，请重新输入"
+   let i=i+1
+   continue
+  fi
+  done
+
+  echo "三次密码输错，退出"
+  exit 1
+}
+
 
 
 
@@ -202,55 +311,21 @@ show_soft_dict()
 }
 
 
-show_deploy_operate()
-{
-  iecho "操作类型:	${1}"
-  iecho "从机列表:	${2}"
-  iecho "第二主机:	${3}"
-
-  iecho "输入 'YES' 以确认"
-  read  TOGO
-  if [ ${TOGO}x = "YES"x ];then
-    return 0;
-  else
-    iecho "操作取消"
-    return 1;
-  fi
-}
-
-show_service_operate()
-{
-  iecho "操作类型:		${1}"
-  iecho "是否操作主机:		${2}"
-  iecho "从机列表:		${3}"
-  iecho "第二主机:		${4}"
-  iecho "要控制的服务列表 	${5}"
-
-  iecho "输入 'YES' 以确认"
-  read  TOGO
-  if [ ${TOGO}x = "YES"x ];then
-    return 0;
-  else
-    iecho "操作取消"
-    return 1;
-  fi
-}
-
 
 
 eecho()
 {
-  echo -e  "\033[0;31;1m$@ \033[0m"
+  echo -e  "\033[0;31;1m[ERROR] $@ \033[0m"
 }
 
 iecho()
 {
-  echo -e  "\033[0;32;1m$@ \033[0m"
+  echo -e  "\033[0;32;1m[INFO] $@ \033[0m"
 }
 
 wecho()
 {
-  echo -e  "\033[0;33;1m$@ \033[0m"
+  echo -e  "\033[0;33;1m[WARN] $@ \033[0m"
 }
 
 # may no need
@@ -258,6 +333,94 @@ report_failure_and_exit()
 {
  echo "${1}"
  exit 0
+}
+
+
+set_time_zone_namenode()
+{
+  iecho "正在设置namenode时区"
+  cp  /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+}
+
+set_time_zone_datanode()
+{
+  iecho "正在设置datanode时区"
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    ssh "${host}" "cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime"
+  done
+}
+
+
+# sync the file 
+copy_esen_software()
+{
+  iecho  "开始拷贝安装包到各个datanode"
+
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    echo "拷贝到 $host 中..."
+    ssh ${SSH_ARGS} $host "mkdir -p $ESEN_PETA/" 1>/dev/null 2>&1
+    rsync -avzu --progress $COMMON_SOFT_DIR $host:$ESEN_PETA/ 1>/dev/null 2>&1
+      if [ $? -ne 0 ];then
+        eecho "无法拷贝 $COMMON_SOFT_DIR/ 到 $host:$ESEN_PETA"
+        exit 0
+      fi
+  
+    rsync -avzu --progress $DATANODE_SOFT_DIR $host:$ESEN_PETA/ 1>/dev/null 2>&1
+      if [ $? -ne 0 ];then
+        eecho "无法拷贝 $DATANODE_SOFT_DIR/ 到 $host:$ESEN_PETA"
+        exit 0
+      fi
+  
+    rsync -avzu --progress $SEC_NAMENODE_SOFT_DIR $host:$ESEN_PETA/ 1>/dev/null 2>&1
+      if [ $? -ne 0 ];then
+        eecho "无法拷贝 $SEC_NAMENODE_SOFT_DIR/ 到 $host:$ESEN_PETA"
+        exit 0
+      fi
+  
+    rsync -avzu --progress $NESS_SOFT_DIR $host:$ESEN_PETA/ 1>/dev/null 2>&1
+      if [ $? -ne 0 ];then
+        eecho "无法拷贝 $NESS_SOFT_DIR/ 到 $host:$ESEN_PETA"
+        exit 0
+      fi
+  
+  done
+}
+
+# 201504xx TODO 目前仅仅禁用本机的防火墙和selinux,没有问题，若发现问题，再来定位
+# 20150423  每个host的iptables必须关闭
+configure_iptables_namenode()
+{
+  iecho "正在关闭namenode防火墙"
+  service iptables stop;
+  chkconfig iptables off;
+}
+
+configure_iptables_datanode()
+{
+  iecho "正在关闭datanode防火墙"
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    ssh $host "service iptables stop"
+    ssh $host "chkconfig iptables off"
+  done
+}
+
+
+
+fix_new_datanode_VERSION_file()
+{
+
+  iecho "正在修正新增datanode 集群ID"
+  local clusterID_str=`cat /data/1/dfs/nn/current/VERSION | grep 'clusterID='`
+  local _datanodes=$1
+  for host in ${_datanodes[@]};
+  do
+    ssh "${host}"  "sed -i 's/clusterID=.*/${clusterID_str}/g' /data/1/dfs/dn/current/VERSION"
+    ssh "${host}"  "sed -i 's/clusterID=.*/${clusterID_str}/g' /data/2/dfs/dn/current/VERSION"
+    ssh "${host}"  "sed -i 's/clusterID=.*/${clusterID_str}/g' /data/3/dfs/dn/current/VERSION"
+  done
 }
 
 
@@ -333,7 +496,7 @@ check_install_remote()
 check_and_install_local()
 {
 
- pkgname=`basename $1 .rpm`
+ local pkgname=`basename $1 .rpm`
  check_install_local $pkgname
  if [ $? -eq 0 ]; then
    echo "本机已经安装${1}，不需要再次安装"
@@ -351,7 +514,7 @@ check_and_install_local()
 
 check_and_install_remote()
 {
- pkgname=`basename $2 .rpm`
+ local pkgname=`basename $2 .rpm`
  check_install_remote $1 $pkgname
  if [ $? -eq 0 ]; then
    echo "${1}已经安装${pkgname}，不需要再次安装"
@@ -370,7 +533,7 @@ check_and_install_remote()
 
 check_and_uninstall_local()
 {
- pkgname=`basename $1 .rpm`
+ local pkgname=`basename $1 .rpm`
  check_install_local $pkgname
  if [ $? -eq 1 ]; then
    echo "本机没有安装${pkgname}，不需要卸载"
@@ -389,7 +552,7 @@ check_and_uninstall_local()
 check_and_uninstall_remote()
 {
 
- pkgname=`basename $2 .rpm`
+ local pkgname=`basename $2 .rpm`
  check_install_remote $1 $pkgname
  if [ $? -eq 1 ]; then
    echo "${1}没有安装${pkgname}，不需要卸载"
@@ -405,11 +568,574 @@ check_and_uninstall_remote()
  fi
 }
 
+check_install_redhat-lsb_namenode()
+{
+  iecho "检查namenode redhat-lsb安装情况"
+  check_install_local redhat-lsb
+  if [ $? = 1 ];then
+    wecho "必须为本机安装redhat-lsb"
+    wecho "请运行yum install -y redhat-lsb后再次执行本预安装脚本"
+    exit 1
+  fi
+}
+
+check_install_redhat-lsb_datanode()
+{
+  iecho "检查datanode redhat-lsb安装情况"
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    check_install_remote $host redhat-lsb
+    if [ $? = 1 ];then
+      wecho "必须为$host安装redhat-lsb"
+      wecho "请为$host运行yum install -y redhat-lsb后再次执行本预安装脚本"
+      exit 1
+    fi
+  done
+}
+
+
+# now not install i386 package, may wrong,may no need 
+# if you remove the package, must specify the platform(x64 or i386), or it won't delete
+check_and_install_lxml_namenode_from_rpm_list()
+{
+  for key in ${!LXML_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`rpm -q ${key}`
+      local pkgname=`basename ${LXML_SOFT_DICT[${key}]} .rpm`
+
+      # 根据这个 $? 是更好的判断pkg是否安装的方法，但是，目前关联数组字典前面的key会覆盖后面的key
+      # (因为只提供了包名，未提供具体版本，32bit和64bit的包名是一样的)
+      # 但如果rpm.list里面的key全部提供带版本号的包名，又会影响高版本的判断(实际安装了高版本的pkg却找不到)
+      # 故，此处还是按上面的方法判断，只不过我们只安装X64的包（如果安装了32bit的包，会进入"升级流程"，一样达到了安装的效果）
+
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
+	rpm -U --nodeps  ${LXML_SOFT_DIR}/${LXML_SOFT_DICT[${key}]} 2>&1 |grep "which is newer" 1>/dev/null 2>&1
+	if [ $? == 0 ];then
+	  iecho "本机的${key}版本更新，无需升级"
+	else
+	  echo "升级本机${key}成功"
+	fi
+      fi
+     else
+      install_soft_local ${LXML_SOFT_DIR}/${LXML_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        return 1
+      fi
+    fi
+  done
+
+  return 0
+}
+
+
+check_and_install_necessary_datanode_from_rpm_list()
+{
+ local _datanodes=$1
+ for host in ${_datanodes[@]}; do
+  for key in ${!NESS_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      local pkgname=`basename ${NESS_SOFT_DICT[${key}]} .rpm`
+      echo ${installed_pkg_name}
+      echo ${pkgname}
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},正尝试升级..."
+	ssh ${host} "rpm -U   ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]} 2>&1 |grep 'which is newer' 1>/dev/null 2>&1"
+	if [ $? == 0 ];then
+	  iecho "${host}的${key}版本更新，无需升级"
+	else
+	  echo "升级${host}的${key}成功"
+	fi
+      fi
+      else
+      install_soft_remote ${host} ${NESS_SOFT_DIR}/${NESS_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        return 1
+      fi
+    fi
+  done
+ done
+ return 0
+}
+
+
+check_and_install_namenode_from_rpm_list()
+{
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`rpm -q ${key}`
+      local pkgname=`basename ${COMMON_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_local ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+
+
+  for key in ${!NAMENODE_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`rpm -q ${key}`
+      local pkgname=`basename ${NAMENODE_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_local ${NAMENODE_SOFT_DIR}/${NAMENODE_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+
+  for key in ${!EXT_SOFT_DICT[@]};do
+    check_install_local ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`rpm -q ${key}`
+      local pkgname=`basename ${EXT_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_local ${EXT_SOFT_DIR}/${EXT_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在本机安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+
+  return 0
+}
+
+check_and_install_datanode_from_rpm_list()
+{
+
+ local _datanodes=$1
+ for host in ${_datanodes[@]}; do
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      local pkgname=`basename ${COMMON_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${host} ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+
+  for key in ${!DATANODE_SOFT_DICT[@]};do
+    check_install_remote ${host} ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`ssh ${host} rpm -q ${key}`
+      local pkgname=`basename ${DATANODE_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${host} ${DATANODE_SOFT_DIR}/${DATANODE_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+ done
+ return 0
+}
+
+
+# 关联数组无法作为参数传入，故而只能逐个处理，无法抽象为函数
+check_and_install_secnamenode_from_rpm_list()
+{
+  local _secondary_namenode=$1
+  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
+    check_install_remote ${_secondary_namenode} ${key}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`ssh ${_secondary_namenode} rpm -q ${key}`
+      local pkgname=`basename ${SEC_NAMENODE_SOFT_DICT[${key}]} .rpm`
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${_secondary_namenode}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${_secondary_namenode}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${_secondary_namenode} ${SEC_NAMENODE_SOFT_DIR}/${SEC_NAMENODE_SOFT_DICT[${key}]}
+      if [ $? -ne 0 ]; then
+        eecho "在${_secondary_namenode}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+ return 0
+}
+
+
+# 不用做任何检查，直接卸载即可
+uninstall_namenode_from_rpm_list()
+{
+  iecho "开始卸载namenode..."
+  for key in ${!NAMENODE_SOFT_DICT[@]};do
+    uninstall_soft_local ${key}
+  done
+
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    uninstall_soft_local ${key}
+  done
+
+  for key in ${!EXT_SOFT_DICT[@]};do
+    uninstall_soft_local ${key}
+  done
+  rm -rf /var/lib/zookeeper
+  return 0
+}
+
+uninstall_datanode_from_rpm_list()
+{
+
+ iecho "开始卸载datanode..."
+ local _datanodes=$1
+ for host in ${_datanodes[@]}; do
+  for key in ${!COMMON_SOFT_DICT[@]};do
+    uninstall_soft_remote ${host} ${key}
+  done
+
+
+  for key in ${!DATANODE_SOFT_DICT[@]};do
+    uninstall_soft_remote ${host} ${key}
+  done
+
+  ssh "${host}" "rm -rf /var/lib/zookeeper"
+ done
+ return 0
+}
+
+uninstall_secnamenode_from_rpm_list()
+{
+  local _secondary_namenode=$1
+  for key in ${!SEC_NAMENODE_SOFT_DICT[@]};do
+    uninstall_soft_remote ${_secondary_namenode} ${key}
+  done
+ return 0
+}
+
+
+
+
+#这个环境变量必须设置！！
+conf_namenode_bigtop-utils()
+{
+  iecho "正在配置本机bigtop..."
+  echo "export JAVA_HOME=$JAVA_DIR" >> /etc/default/bigtop-utils
+}
+
+
+conf_datanode_bigtop-utils()
+{
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+  iecho "正在配置 ${host} 上的 bigtop..."
+    scp  /etc/default/bigtop-utils $host:/etc/default/ 1>/dev/null 2>&1
+    ssh  "{$host}" "chown root:root /etc/default/bigtop-utils" 1>/dev/null 2>&1
+  done
+}
+
+
+
+# 后期提供更精细的拷贝
+prepare_use_hadoop_namenode()
+{
+  # namenode
+  iecho "开始准备使用 namenode"
+  rm -rf /etc/hadoop/conf.my_cluster
+  cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster
+  alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50
+  alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster
+
+  # show info
+  #alternatives --display hadoop-conf
+
+  rm -rf /data
+  mkdir -p /data/1/dfs/nn
+  chmod 700 /data/1/dfs/nn
+  chown -R hdfs:hdfs /data/1/dfs/nn
+
+
+  # 服务启动之前，配置文件拷贝之后
+}
+
+
+prepare_use_hadoop_datanode()
+{
+  local _datanodes=$1
+ 
+  # datanodes
+  for host in ${_datanodes[@]}; do
+    ssh  $host "rm -rf /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
+    ssh  $host "cp -r /etc/hadoop/conf.empty /etc/hadoop/conf.my_cluster/" 1>/dev/null 2>&1
+    ssh  $host "alternatives --install /etc/hadoop/conf hadoop-conf /etc/hadoop/conf.my_cluster 50" 1>/dev/null 2>&1
+    ssh  $host "alternatives --set hadoop-conf /etc/hadoop/conf.my_cluster" 1>/dev/null 2>&1
+
+    # show info
+    #ssh  $host "alternatives --display hadoop-conf"
+  done
+
+
+  # slaves node
+  for node in ${DATANODES[@]}; do
+    ssh  $node "rm -rf /data"
+    ssh  $node "mkdir -p /data/1/dfs/dn /data/2/dfs/dn /data/3/dfs/dn"
+    ssh  $node "chown -R hdfs:hdfs /data/1/dfs/dn /data/2/dfs/dn /data/3/dfs/dn"
+  done
+
+}
+
+
+copy_xml_namenode()
+{
+  iecho "开始拷贝配置文件到namenode..."
+  
+  # zookeeper
+  cp -f ${CONFIGURATION_DIR}/zookeeper/zoo.cfg /etc/zookeeper/conf/zoo.cfg
+  # hadoop
+  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/core-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/hdfs-site.xml /etc/hadoop/conf.my_cluster/
+  cp -f ${CONFIGURATION_DIR}/hadoop/namenode/mapred-site.xml /etc/hadoop/conf.my_cluster/
+
+  # TODO no need? 曾经有一个集群 datanodes slaves里面存的localhost 
+  #cp -f ${CONFIGURATION_DIR}/hadoop/masters /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+  #cp -f ${CONFIGURATION_DIR}/hadoop/slaves /etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+
+  cp -f ${CONFIGURATION_DIR}/hadoop/hadoop /etc/default/hadoop
+  # hive
+  cp -f ${CONFIGURATION_DIR}/hive/hive-site.xml /etc/hive/conf/
+  # petabase
+
+  # TODO 做一个简单的替换就行了
+  sed -i "s/127.0.0.1/$MASTER_HOST/g" /etc/default/impala
+
+  cp -f ${CONFIGURATION_DIR}/petabase/core-site.xml /etc/impala/conf/
+  cp -f ${CONFIGURATION_DIR}/petabase/hdfs-site.xml /etc/impala/conf/
+  cp -f ${CONFIGURATION_DIR}/petabase/hive-site.xml /etc/impala/conf/
+}
+
+copy_xml_datanode()
+{
+  iecho "开始拷贝配置文件到datanode..."
+
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    echo "${host}进行中..."
+    # zookeeper
+    scp  /etc/zookeeper/conf/zoo.cfg $host:/etc/zookeeper/conf/  1>/dev/null 2>&1
+    # hadoop
+    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/core-site.xml $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/hdfs-site.xml $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+    scp  ${CONFIGURATION_DIR}/hadoop/datanodes/mapred-site.xml $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+
+    # TODO no need? 曾经有一个集群 datanodes slaves里面存的localhost 
+    #scp  /etc/hadoop/conf.my_cluster/masters $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+    #scp  /etc/hadoop/conf.my_cluster/slaves $host:/etc/hadoop/conf.my_cluster/ 1>/dev/null 2>&1
+
+    scp  /etc/default/hadoop $host:/etc/default/ 1>/dev/null 2>&1
+    ssh  $host "chown root:root /etc/default/hadoop"
+    # hive
+    scp  /etc/hive/conf/hive-site.xml $host:/etc/hive/conf/ 1>/dev/null 2>&1
+    # petabase
+    scp  /etc/default/impala $host:/etc/default/
+    scp  /etc/impala/conf/core-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
+    scp  /etc/impala/conf/hdfs-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
+    scp  /etc/impala/conf/hive-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
+    ssh  $host "chown -R root:root /etc/impala/conf"
+    ssh  $host "chown root:root /etc/default/impala"
+  done
+}
+
+prepare_use_hive_namenode()
+{
+  cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib
+
+  # TODO 貌似没有这个文件
+  #cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib
+  usermod -a -G hadoop petabase
+  usermod -a -G hive petabase
+  usermod -a -G hdfs petabase
+}
+
+
+
+prepare_use_hive_datanode()
+{
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    ssh  $host "cp -f ${COMMON_SOFT_DIR}/mysql-connector-java-*.jar /usr/lib/hive/lib"
+
+    # TODO 貌似原来也没有这个文件，只是原来把输出重定向了...
+    #ssh  $host "cp -f /usr/lib/parquet/lib/parquet-hive*.jar /usr/lib/hive/lib"
+    ssh  $host "usermod -a -G hadoop petabase"
+    ssh  $host "usermod -a -G hive petabase"
+    ssh  $host "usermod -a -G hdfs petabase"
+  done
+}
+
+
+# TODO 关于zookeeper 各个node安装的必要性须进一步核实
+init_zookeeper_namenode()
+{
+
+# 原来的逻辑突然出了问题，这里使用新的逻辑
+#  echo "[Log] zookeeper initialization"
+#  # master node
+#  echo "now in $MASTER_HOST"
+#  mkdir -p /var/lib/zookeeper
+#  chown -R zookeeper /var/lib/zookeeper/  
+#  # slaves node
+#  for node in ${datanodes[@]}; do
+#    if [ "${node}" != "${MASTER_HOST}" ]; then
+#      echo "now in $node"
+#
+#      ssh  "${node}"  "mkdir -p /var/lib/zookeeper"
+#      ssh  "${node}"  "chown -R zookeeper /var/lib/zookeeper/" 
+#    fi
+#  done  
+#
+#  # TODO is there any thing wrong?
+#  # read zoo.cfg to init zookeeper
+#  #cat /etc/zookeeper/conf/zoo.cfg | grep server |while read line
+#  cat /etc/zookeeper/conf/zoo.cfg | grep server | grep -P '^(?!#)' |while read line
+#  do
+#  echo $line
+#    # 冒号分开，取第一个；点好分开，取第二个；等号分开，取第一个
+#    number=`echo $line | awk -F ":" '{print $1}' | awk -F [.] '{print $2}' | awk -F [=] '{print $1}'`
+#    # 道理同上
+#    nodename=`echo $line | awk -F ":" '{print $1}' | awk -F [.] '{print $2}' | awk -F [=] '{print $2}'`
+#    echo $nodename myid is $number
+#
+#    # 这里远程操控本机了
+     # 不知为何，这里执行第一个ssh之后就退出
+#    ssh  ${nodename} "service zookeeper-server init --myid=$number"
+#  done
+
+
+# 使用host.info文件，务必保证host.info文件的信息是新的，--force参数可以保证所有host重新init
+  # master node
+  iecho "开始配置namenode上的zookeeper"
+  mkdir -p /var/lib/zookeeper
+  chown -R zookeeper /var/lib/zookeeper/  
+  service zookeeper-server init --force --myid=1
+}
+
+
+init_zookeeper_datanode()
+{
+  iecho "开始配置datanode上的zookeeper"
+  local _datanodes=$1
+  i=2
+  # slaves node
+  for host in ${_datanodes[@]}; do
+      echo "${node}...."
+      ssh  "${host}"  "mkdir -p /var/lib/zookeeper"
+      ssh  "${host}"  "chown -R zookeeper /var/lib/zookeeper/" 
+      ssh  "${host}"  "service zookeeper-server init --force --myid=${i}"
+      let i=i+1
+  done  
+}
+
+# mapred 特指 mapred V1  yarn 特指 mapred V2
+# 这个在启动服务hdfs之后调用
+prepare_use_mapred_namenode()
+{
+  mkdir -p /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
+  chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local
+
+}
+
+init_mapred_tracker()
+{
+  sudo -u hdfs hadoop fs -mkdir /tmp
+  sudo -u hdfs hadoop fs -chmod -R 1777 /tmp
+
+  sudo -u hdfs hadoop fs -mkdir -p /var/lib/hadoop-hdfs/cache/mapred/mapred/staging
+  sudo -u hdfs hadoop fs -chmod 1777 /var/lib/hadoop-hdfs/cache/mapred/mapred/staging
+  sudo -u hdfs hadoop fs -chown -R mapred /var/lib/hadoop-hdfs/cache/mapred
+  sudo -u hdfs hadoop fs -mkdir -p /tmp/mapred/system
+  sudo -u hdfs hadoop fs -chown mapred:hadoop /tmp/mapred/system
+
+
+}
+
+prepare_use_mapred_datanode()
+{
+  for node in ${DATANODES[@]}; do
+    ssh  $node "mkdir -p /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local"
+    ssh  $node "chown -R mapred:hadoop /data/1/mapred/local /data/2/mapred/local /data/3/mapred/local"
+  done
+}
+
+
+
+delete_group-user_namenode()
+{
+  iecho "开始删除namenode上的petabase用户和组"
+  userdel -r $PETA_USER 1>/dev/null 2>&1
+  groupdel $PETA_GRP 1>/dev/null 2>&1
+}
+
+delete_group-user_datanode()
+{
+  iecho "开始删除datanode上的petabase用户和组"
+  local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+    ssh  $host "userdel -r $PETA_USER" 1>/dev/null 2>&1
+    ssh  $host "groupdel $PETA_GRP" 1>/dev/null 2>&1
+  done
+}
+
+
 # 第一次部署好之后会自动启动所有服务
 start_zookeeper_local()
 {
   service zookeeper-server start 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     eecho "本机 zookeeper-server 启动失败"
   else
@@ -421,7 +1147,7 @@ start_zookeeper_local()
 start_zookeeper_remote()
 {
   ssh "${1}" "service zookeeper-server start"  1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     eecho  "${1} zookeeper-server 启动失败"
   else
@@ -431,11 +1157,25 @@ start_zookeeper_remote()
 }
 
 
+
+start_zookeeper_datanode()
+{
+  local _datanodes=$1
+
+  for host in ${_datanodes[@]};
+  do
+   start_zookeeper_remote "${host}" 
+  done
+}
+
+
+
+
 # local 一般就是 namenode， 我们默认在本机上部署namenode，且在本机上面执行所有的脚本
 start_hadoop_local()
 {
   service hadoop-hdfs-namenode start 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     eecho "本机 hadoop-hdfs-namenode 启动失败"
   else
@@ -448,7 +1188,7 @@ start_hadoop_local()
 start_mapred_jobtracker_local()
 {
   service hadoop-0.20-mapreduce-jobtracker start 1>/dev/null 2>&1
-  ret=${?}
+  local  ret=${?}
   if [ ${ret} -ne 0 ];then
     eecho "本机 hadoop-0.20-mapreduce-jobtracker 启动失败"
   else
@@ -461,7 +1201,7 @@ start_mapred_jobtracker_local()
 start_hadoop_remote()
 {
   ssh "${1}" "service hadoop-hdfs-datanode start" 1>/dev/null 2>&1
-  ret=${?}
+  local ret=${?}
   if [ ${ret} -ne 0 ];then
     eecho "${1} hadoop-hdfs-datanode 启动失败"
   else
@@ -470,10 +1210,22 @@ start_hadoop_remote()
   return ${ret}
 }
 
+start_hadoop_datanode()
+{
+
+  local _datanodes=$1
+
+  for host in ${_datanodes[@]};
+  do
+   start_hadoop_remote "${host}" 
+  done
+}
+
+
 start_mapred_tasktracker_remote()
 {
   ssh "${1}" "service hadoop-0.20-mapreduce-tasktracker start" 1>/dev/null 2>&1
-  ret=${?}
+  local ret=${?}
   if [ ${ret} -ne 0 ];then
     eecho "${1} hadoop-0.20-mapreduce-tasktracker 启动失败"
   else
@@ -482,13 +1234,23 @@ start_mapred_tasktracker_remote()
   return ${ret}
 }
 
+start_mapred_tasktracker_datanode()
+{
+  local _datanodes=$1
+
+  for host in ${_datanodes[@]};
+  do
+   start_mapred_tasktracker_remote "${host}" 
+  done
+}
+
 
 
 # 只有本机才有hive
 start_hive_local()
 {
   service hive-metastore start 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     eecho "本机 hive-metastore 启动失败"
   else
@@ -502,7 +1264,7 @@ start_hive_local()
 start_petabase_local()
 {
   service petabase-state-store start 1>/dev/null 2>&1
-  ret1=${?}
+  local ret1=${?}
   if [ ${ret1} -ne 0 ];then
     eecho "本机 petabase-state-store 启动失败"
   else
@@ -510,7 +1272,7 @@ start_petabase_local()
   fi
 
   service petabase-catalog start 1>/dev/null 2>&1
-  ret2=${?}
+  local ret2=${?}
   if [ ${ret2} -ne 0 ];then
     eecho "本机 petabase-catalog 启动失败"
   else
@@ -525,7 +1287,7 @@ start_petabase_local()
 start_petabase_remote()
 {  
   ssh "${1}" "service petabase-server start"  1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     eecho  "${1} petabase-server 启动失败"
   else
@@ -534,11 +1296,22 @@ start_petabase_remote()
   return ${ret}
 }
 
+
+start_petabase_datanode()
+{
+  local _datanodes=$1
+
+  for host in ${_datanodes[@]};
+  do
+   start_petabase_remote "${host}" 
+  done
+}
+
 # 通过传入参数指定host来获知
 start_secondary_namenode()
 {
   ssh "${1}" "service hadoop-hdfs-secondarynamenode start" 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     eecho "${1} hadoop-hdfs-secondarynamenode 启动失败"
   else
@@ -548,11 +1321,11 @@ start_secondary_namenode()
 }
 
 
-# 下面的start XXX 直接代表启动集群中所有服务
+# 下面的start XXX 直接代表启动所有集群中服务
 start_zookeeper()
 {
   start_zookeeper_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     start_zookeeper_remote "${host}"
@@ -564,7 +1337,7 @@ start_zookeeper()
 start_hadoop()
 {
   start_hadoop_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     start_hadoop_remote ${host}
@@ -578,7 +1351,7 @@ start_hadoop()
 start_mapred_tracker()
 {
   start_mapred_jobtracker_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     start_mapred_tasktracker_remote ${host}
@@ -591,7 +1364,7 @@ start_mapred_tracker()
 start_hive()
 {
   start_hive_local
-  ret=$?
+  local ret=$?
   return ${ret}
 }
 
@@ -599,7 +1372,7 @@ start_hive()
 start_petabase()
 {
   start_petabase_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     start_petabase_remote ${host}
@@ -608,6 +1381,32 @@ start_petabase()
   return ${ret}
 }
 
+# 这个是全部重建，不是增删
+conf_haproxy() 
+{
+ local _datanodes=$1
+ rm -f /etc/haproxy/haproxy.cfg
+ cat HA.config.part1 >> /etc/haproxy/haproxy.cfg
+ for host in ${_datanodes[@]}; do
+   echo "server ${host}_jdbc ${host}:21050" >>/etc/haproxy/haproxy.cfg
+ done
+ cat HA.config.part2 >> /etc/haproxy/haproxy.cfg
+ for host in ${_datanodes[@]}; do
+   echo "server ${host}_shell ${host}:21000" >>/etc/haproxy/haproxy.cfg
+ done
+ chkconfig haproxy on
+ service haproxy start
+}
+
+start_haproxy()
+{
+ service haproxy start
+}
+
+restart_haproxy()
+{
+ service haproxy restart
+}
 
 
 
@@ -617,7 +1416,7 @@ start_petabase()
 status_zookeeper_local()
 {
   service zookeeper-server status 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     wecho "本机 zookeeper-server 未启动"
   else
@@ -629,7 +1428,7 @@ status_zookeeper_local()
 status_zookeeper_remote()
 {
   ssh "${1}" "service zookeeper-server status"  1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     wecho  "${1} zookeeper-server 未启动"
   else
@@ -643,7 +1442,7 @@ status_zookeeper_remote()
 status_zookeeper()
 {
   status_zookeeper_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     status_zookeeper_remote ${host}
@@ -656,7 +1455,7 @@ status_zookeeper()
 status_hadoop_local()
 {
   service hadoop-hdfs-namenode status 1>/dev/null 2>&1
-  ret1=$?
+  local ret1=$?
   if [ ${ret1} -ne 0 ];then
     wecho "本机 hadoop-hdfs-namenode 未启动"
   else
@@ -664,13 +1463,13 @@ status_hadoop_local()
   fi
 
   service hadoop-0.20-mapreduce-jobtracker status 1>/dev/null 2>&1
-  ret2=$?
+  local ret2=$?
   if [ ${ret2} -ne 0 ];then
     wecho "本机 hadoop-0.20-mapreduce-jobtracker 未启动"
   else
     echo "本机 hadoop-0.20-mapreduce-jobtracker 已启动"
   fi
-  ret=${ret1}||${ret2}
+  local ret=${ret1}||${ret2}
 
   return ${ret}
 }
@@ -678,7 +1477,7 @@ status_hadoop_local()
 status_hadoop_remote()
 {
   ssh "${1}" "service hadoop-hdfs-datanode status" 1>/dev/null 2>&1
-  ret1=$?
+  local ret1=$?
   if [ ${ret1} -ne 0 ];then
     wecho "${1} hadoop-hdfs-datanode 未启动"
   else
@@ -686,13 +1485,13 @@ status_hadoop_remote()
   fi
 
   ssh "${1}" "service hadoop-0.20-mapreduce-tasktracker status" 1>/dev/null 2>&1
-  ret2=${?}
+  local ret2=${?}
   if [ ${ret2} -ne 0 ];then
     wecho "${1} hadoop-0.20-mapreduce-tasktracker 未启动"
   else
     echo "${1} hadoop-0.20-mapreduce-tasktracker 已启动"
   fi
-  ret=${ret1}||${ret2}
+  local ret=${ret1}||${ret2}
 
   return ${ret}
 }
@@ -700,7 +1499,7 @@ status_hadoop_remote()
 status_hadoop()
 {
   status_hadoop_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     status_hadoop_remote ${host}
@@ -715,7 +1514,7 @@ status_hadoop()
 status_hive_local()
 {
   service hive-metastore status 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     wecho "本机 hive-metastore 未启动"
   else
@@ -727,7 +1526,7 @@ status_hive_local()
 status_hive()
 {
   status_hive_local
-  ret=$?
+  local ret=$?
   return ${ret}
 }
 
@@ -735,7 +1534,7 @@ status_hive()
 status_petabase_local()
 {
   service petabase-state-store status 1>/dev/null 2>&1
-  ret1=$?
+  local ret1=$?
   if [ ${ret1} -ne 0 ];then
     wecho "本机 petabase-state-store 未启动"
   else
@@ -743,13 +1542,13 @@ status_petabase_local()
   fi
 
   service petabase-catalog status 1>/dev/null 2>&1
-  ret2=${?}
+  local ret2=${?}
   if [ ${ret2} -ne 0 ];then
     wecho "本机 petabase-catalog 未启动"
   else
     echo "本机 petabase-catalog 已启动"
   fi
-  ret=${ret1}||${ret2}
+  local ret=${ret1}||${ret2}
 
   return ${ret}
 }
@@ -758,7 +1557,7 @@ status_petabase_local()
 status_petabase_remote()
 {  
   ssh "${1}" "service petabase-server status"  1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     wecho  "${1} petabase-server 未启动"
   else
@@ -770,7 +1569,7 @@ status_petabase_remote()
 status_petabase()
 {
   status_petabase_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     status_petabase_remote ${host}
@@ -783,7 +1582,7 @@ status_petabase()
 status_secondary_namenode()
 {
   ssh "${1}" "service hadoop-hdfs-secondarynamenode status" 1>/dev/null 2>&1
-  ret=$?
+  local ret=$?
   if [ ${ret} -ne 0 ];then
     wecho "${1} hadoop-hdfs-secondarynamenode 未启动"
   else
@@ -810,7 +1609,7 @@ stop_zookeeper_remote()
 stop_zookeeper()
 {
   stop_zookeeper_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     stop_zookeeper_remote ${host}
@@ -843,7 +1642,7 @@ stop_hadoop_remote()
 stop_hadoop()
 {
   stop_hadoop_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     stop_hadoop_remote ${host}
@@ -863,8 +1662,6 @@ stop_hive_local()
 stop_hive()
 {
   stop_hive_local
-  ret=$?
-  return ${ret}
 }
 
 # 本机仅仅 state-store 和 catelog
@@ -875,8 +1672,6 @@ stop_petabase_local()
 
   echo "本机即将停止服务  petabase-catalog"
   service petabase-catalog stop 1>/dev/null 2>&1
-
-  return ${ret}
 }
 
 # 远程机器仅仅 server
@@ -889,7 +1684,7 @@ stop_petabase_remote()
 stop_petabase()
 {
   stop_petabase_local
-  ret=$?
+  local ret=$?
   for host in ${DATANODES[@]};
   do
     stop_petabase_remote ${host}
@@ -915,5 +1710,3 @@ esen-ssh()
 }
 
 
-construct_soft_dict
-construct_host_info
