@@ -59,6 +59,12 @@ declare -A LXML_SOFT_DICT
 mysql_root_passwd=""
 
 
+
+HADOOP_RPM=hadoop-2.5.0+cdh5.3.0+781-1.cdh5.3.0.p0.54.el6.x86_64.rpm
+HADOOP_PKG=hadoop-2.5.0+cdh5.3.0+781-1.cdh5.3.0.p0.54.el6.x86_64
+HADOOP="hadoop"
+
+
 perm_check()
 {
   local current_usr="`whoami`"
@@ -127,6 +133,26 @@ test_connect_datanode()
      exit 1
     fi
   done
+
+  iecho "开始检查本机网络配置"
+  local MASTER_NAME=`hostname`
+  ping -c1 -w5 "${MASTER_NAME}" 1>/dev/null  2>&1
+  if [[ $? != 0 ]];then
+   wecho "本机hostname和/etc/hosts不匹配，请检查配置"
+   exit 1
+  fi
+
+  iecho "开始检查从机网络配置"
+  for host in ${_datanodes[@]};
+  do
+    local SLAVE_NAME=`ssh ${host} "hostname"`
+    ping -c1 -w5 "${SLAVE_NAME}" 1>/dev/null  2>&1
+    if [[ $? != 0 ]];then
+     wecho "${host}上hostname和/etc/hosts不匹配，请检查配置"
+     exit 1
+    fi
+  done
+
   return 0
 }
 
@@ -353,7 +379,7 @@ set_time_zone_datanode()
 
 
 # sync the file 
-copy_esen_software()
+sync_esen_software()
 {
   iecho  "开始拷贝安装包到各个datanode"
 
@@ -668,6 +694,57 @@ check_and_install_necessary_datanode_from_rpm_list()
 }
 
 
+
+
+check_and_install_hadoop_namenode()
+{
+   iecho "即将开始在namenode安装hadoop基础包"
+   check_install_local ${HADOOP}
+   if [ $? -eq 0 ]; then
+     local installed_pkg_name=`rpm -q ${HADOOP}`
+     local pkgname= "${HADOOP_PKG}"
+     if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+       iecho "已经安装${installed_pkg_name}，不需要再次安装"
+     else
+       wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+       exit 1
+     fi
+   else
+     install_soft_local "${COMMON_SOFT_DIR}/${HADOOP_RPM}"
+     if [ $? -ne 0 ]; then
+       eecho "在本机安装${pkgname}失败，请检查相关日志"
+       exit 1
+     fi
+   fi
+
+}
+
+check_and_install_hadoop_datanode()
+{
+ iecho "即将开始在datanode安装hadoop基础包"
+ local _datanodes=$1
+ for host in ${_datanodes[@]}; do
+    check_install_remote ${host} ${HADOOP}
+    if [ $? -eq 0 ]; then
+      local installed_pkg_name=`ssh "${host}" "rpm -q ${HADOOP}"`
+      local pkgname= "${HADOOP_PKG}"
+      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
+   	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
+      else
+        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	exit 1
+      fi
+    else
+      install_soft_remote ${host} "${COMMON_SOFT_DIR}/${HADOOP_RPM}"
+      if [ $? -ne 0 ]; then
+        eecho "在${host}安装${pkgname}失败，请检查相关日志"
+        exit 1
+      fi
+    fi
+  done
+}
+
+
 check_and_install_namenode_from_rpm_list()
 {
   for key in ${!COMMON_SOFT_DICT[@]};do
@@ -810,6 +887,12 @@ check_and_install_secnamenode_from_rpm_list()
 }
 
 
+uninstall_hadoop_namenode()
+{
+ iecho "即将开始在namenode卸载hadoop基础包"
+ uninstall_soft_local ${HADOOP}
+}
+
 # 不用做任何检查，直接卸载即可
 uninstall_namenode_from_rpm_list()
 {
@@ -828,6 +911,16 @@ uninstall_namenode_from_rpm_list()
   rm -rf /var/lib/zookeeper
   return 0
 }
+
+uninstall_hadoop_datanode()
+{
+ iecho "即将开始在datanode卸载hadoop基础包"
+ local _datanodes=$1
+ for host in ${_datanodes[@]}; do
+    uninstall_soft_remote ${host} ${HADOOP}
+ done
+}
+
 
 uninstall_datanode_from_rpm_list()
 {
@@ -981,7 +1074,7 @@ copy_xml_datanode()
     # hive
     scp  /etc/hive/conf/hive-site.xml $host:/etc/hive/conf/ 1>/dev/null 2>&1
     # petabase
-    scp  /etc/default/impala $host:/etc/default/
+    scp  /etc/default/impala $host:/etc/default/ 1>/dev/null 2>&1
     scp  /etc/impala/conf/core-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
     scp  /etc/impala/conf/hdfs-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1
     scp  /etc/impala/conf/hive-site.xml $host:/etc/impala/conf/ 1>/dev/null 2>&1

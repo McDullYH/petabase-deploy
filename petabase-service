@@ -276,15 +276,15 @@ operate_start()
 
       建议您在执行本操作前，首先使用 ./petabase-service status 来查看相应的状态
 EOF
+       iecho "输入 'YES' 以确认继续操作"
+       read  TOGO
+       if [ ${TOGO}x != "YES"x ];then
+         exit 0;
+       fi
       else
        _service_list=${SERVICE_LIST}
       fi
 
-     iecho "输入 'YES' 以确认继续操作"
-     read  TOGO
-     if [ ${TOGO}x != "YES"x ];then
-       exit 0;
-     fi
 
     if [[ -z "${_datanodes}" ]] && [[ -z "${_secondary_namenode}" ]] && [[  "${_include_master}" = "否" ]]; then
       start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${_service_list}"

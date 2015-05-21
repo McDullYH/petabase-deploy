@@ -165,27 +165,27 @@ uninstall_necessary_soft_datanodes()
 install_mysql()
 {
 
-  rpm -Uvh --replacefiles $MYSQL_SOFT_DIR/mysql-community-common-5.6.23-2.el6.x86_64.rpm
+  rpm -Uvh --replacefiles --force  $MYSQL_SOFT_DIR/mysql-community-common-5.6.23-2.el6.x86_64.rpm
       if [ $? -ne 0 ];then
         eecho "无法安装 $mysql-community-common to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
       
-  rpm -ivh --replacefiles $MYSQL_SOFT_DIR/mysql-community-libs-5.6.23-2.el6.x86_64.rpm
+  rpm -ivh --replacefiles --force   $MYSQL_SOFT_DIR/mysql-community-libs-5.6.23-2.el6.x86_64.rpm
       if [ $? -ne 0 ];then
         eecho "无法安装 $mysql-community-libs to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
 
-  rpm -Uvh --replacefiles $MYSQL_SOFT_DIR/mysql-community-client-5.6.23-2.el6.x86_64.rpm
+  rpm -Uvh --replacefiles --force   $MYSQL_SOFT_DIR/mysql-community-client-5.6.23-2.el6.x86_64.rpm
       if [ $? -ne 0 ];then
         eecho "无法安装 $mysql-community-client to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
 
-  rpm -Uvh --replacefiles $MYSQL_SOFT_DIR/perl-DBI-1.609-4.el6.x86_64.rpm
+  rpm -Uvh --replacefiles --force   $MYSQL_SOFT_DIR/perl-DBI-1.609-4.el6.x86_64.rpm
       if [ $? -ne 0 ];then
         eecho "无法安装 $mysql-community-perl-DBI to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
 
-  rpm -Uvh --replacefiles $MYSQL_SOFT_DIR/mysql-community-server-5.6.23-2.el6.x86_64.rpm
+  rpm -Uvh --replacefiles --force   $MYSQL_SOFT_DIR/mysql-community-server-5.6.23-2.el6.x86_64.rpm
       if [ $? -ne 0 ];then
         eecho "无法安装 $mysql-community-server to $MASTER_HOST,请检查是不是先前版本的mysql没有删除干净，或者已经运行了本预安装程序"
       fi
@@ -242,7 +242,6 @@ configure_selinux()
 
 
 
-# TODO 如果机器上面部署了高版本的mysql，且需要使用，如何处理
 check_install_mysql()
 {
   rpm -qa |grep -i mysql |grep -v mysql-libs 1>/dev/null 2>&1
@@ -271,7 +270,6 @@ arg_check()
 
 #############################################################################
 
-construct_host_info
 perm_check
 
 TEMP=`getopt -o n:s:f:hz:: -l nodes:,secondary-namenode:,nodes-file:,help,z-long \
@@ -343,9 +341,10 @@ ssh_auth "${datanodes}"
 check_install_redhat-lsb_namenode 
 check_install_redhat-lsb_datanode "${datanodes}"
 
-check_install_mysql
+# 不需要检查 初始系统会默认安装一个mysql-libs，如果卸载，会缺少一个so的依赖，直接--force安装mysql相关组件即可，之后yum check dependencies不会有问题
+# #check_install_mysql
 
-copy_esen_software "${datanodes}"
+sync_esen_software "${datanodes}"
 
 set_time_zone_namenode 
 set_time_zone_datanode "${datanodes}"

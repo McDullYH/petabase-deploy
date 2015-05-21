@@ -122,9 +122,11 @@ operate_add_nodes()
 
  check_install_redhat-lsb_datanode "${new_datanodes}"
 
- copy_esen_software "${new_datanodes}"
+ sync_esen_software "${new_datanodes}"
 
  set_time_zone_datanode "${new_datanodes}"
+
+ check_and_install_hadoop_datanode "${new_datanodes}"
 
  check_and_install_necessary_datanode_from_rpm_list "${new_datanodes}"
 
@@ -229,6 +231,8 @@ operate_eraser_nodes()
 
 
  delete_group-user_datanode "${eraser_datanodes}"
+
+ uninstall_hadoop_datanode "${eraser_datanodes}"
 
  uninstall_datanode_from_rpm_list "${eraser_datanodes}"
 

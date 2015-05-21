@@ -778,6 +778,10 @@ if [ ${operate}x = "install"x ];then
   #install_soft_namenode
   #install_soft_datanodes
   #install_secondarynamenode
+
+  check_and_install_hadoop_namenode
+  check_and_install_hadoop_datanode "${datanodes}"
+
   check_and_install_namenode_from_rpm_list
   check_and_install_datanode_from_rpm_list "${datanodes}"
   check_and_install_secnamenode_from_rpm_list "${secondary_namenode}"
@@ -852,9 +856,14 @@ elif [ ${operate}x = "uninstall"x ];then
   delete_group-user_namenode
   delete_group-user_datanode "${datanodes}"
 
+
   uninstall_namenode_from_rpm_list
   uninstall_datanode_from_rpm_list "${DATANODES}"
   uninstall_secnamenode_from_rpm_list "${SECONDARY_NAMENODE}"
+
+  uninstall_hadoop_namenode
+  uninstall_hadoop_datanode "${DATANODES}"
+
   clean_host_info
 
   #uninstall_soft_namenode
