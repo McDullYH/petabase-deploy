@@ -119,17 +119,13 @@ service_arg_check()
 # 第二个参数，从机列表
 # 第三个参数，第二主机  (其实可以为是否操作第二主机)
 # 第四个参数，服务列表
-start_arg()
+operate_start()
 {
   local _include_master=${1}
   local _datanodes=${2}
   local _secondary_namenode=${3}
-  local _servicel_ist=${4}
+  local _service_list=${4}
 
-  show_service_operate "start" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_service_list}"
-  if [ $? != 0 ];then
-    exit 1;
-  fi
 
   # 5个参数必须全，这样可以大大简化代码
   echo "${_service_list}" | grep -q "\<zookeeper\>"
@@ -190,16 +186,13 @@ start_arg()
 
 }
 
-stop_arg()
+operate_stop()
 {
   local _include_master=${1}
   local _datanodes=${2}
   local _secondary_namenode=${3}
   local _service_list=${4}
 
-  if [[ -z "${YES}" ]];then
-    show_service_operate "stop" "${_include_master}" "${_datanodes}" "${_secondary_namenode}" "${_service_list}"
-  fi
 
   echo "${_service_list}" | grep -q "\<petabase\>"
   if [ $? -eq 0 ];then
@@ -255,78 +248,6 @@ stop_arg()
 }
 
 
-operate_start()
-{
-
-    local _include_master=$1
-    local _datanodes=$2
-    local _secondary_namenode=$3
-    local _service_list=$4
-
-      if [[ -n "${_service_list}" ]];then
-      cat <<EOF
-      petabse 4 个组件的启动是有依赖关系的，一般来说是zookeeper-->hadoop-->hive-->petabase的顺序
-
-      即 如果hive相关没有正确启动，petabase服务是无法启动的(比如catalog)
-      但 其中少许一些服务如(datanode)没有正确启动，又不会影响后面的服务
-
-      总之
-      如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service start 是最好的选择
-      当然，如果您非常清楚他们之间的关系，登录到相应的机器进行控制也是非常好的选择
-
-      建议您在执行本操作前，首先使用 ./petabase-service status 来查看相应的状态
-EOF
-       iecho "输入 'YES' 以确认继续操作"
-       read  TOGO
-       if [ ${TOGO}x != "YES"x ];then
-         exit 0;
-       fi
-      else
-       _service_list=${SERVICE_LIST}
-      fi
-
-
-    if [[ -z "${_datanodes}" ]] && [[ -z "${_secondary_namenode}" ]] && [[  "${_include_master}" = "否" ]]; then
-      start_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${_service_list}"
-
-    elif [[ -n "${_datanodes}" ]] || [[ -n "${_secondary_namenode}" ]] || [[ "${_include_master}" = "是" ]] ;then 
-      start_arg "${_include_master}" "${_datanodes}" "${_secondary_namenode}"  "${_service_list}"
-
-    else
-      echo "不支持的参数形式，请联系管理员"
-
-    fi
-    return 0
-
-
-
-}
-
-
-operate_stop()
-{   
-    local _include_master=$1
-    local _datanodes=$2
-    local _secondary_namenode=$3
-    local _service_list=$4
-
-    if [[ -z "${_service_list}" ]];then
-      _service_list=${SERVICE_LIST}
-    fi
-
-    if [[ -z "${_datanodes}" ]] && [[ -z "${_secondary_namenode}" ]] && [[  "${_include_master}" = "否" ]]; then
-      stop_arg "是" "${DATANODES}" "${SECONDARY_NAMENODE}"  "${_service_list}"
-
-    elif [[ -n "${_datanodes}" ]] || [[ -n "${_secondary_namenode}" ]] || [[ "${_include_master}" = "是" ]] ;then 
-      stop_arg "${_include_master}" "${_datanodes}" "${_secondary_namenode}"  "${_service_list}"
-
-    else
-      echo "不支持的参数形式，请联系管理员"
-
-    fi
-    return 0
-
-}
 
 # status命令直接查看所有机器的服务运行情况，部署人员配合grep使用即可分开查看
 operate_status()
@@ -391,7 +312,6 @@ while true ; do
 
      -d|--service)
        IFS=','; service_list=$2;
-       echo "Option $1's argument is $service_list"; 
        shift 2 ;;
 
      -h|--help)  
@@ -437,6 +357,35 @@ fi
 
 test_connect_datanode "${datanodes}"
 
+if [[ -n "${service_list}" ]];then
+cat <<EOF
+petabse 4 个组件的启动是有依赖关系的，一般来说是zookeeper-->hadoop-->hive-->petabase的顺序
+
+即 如果hive相关没有正确启动，petabase服务是无法启动的(比如catalog)
+但 其中少许一些服务如(datanode)没有正确启动，又不会影响后面的服务
+
+总之
+如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service start 是最好的选择
+当然，如果您非常清楚他们之间的关系，登录到相应的机器进行控制也是非常好的选择
+
+建议您在执行本操作前，首先使用 ./petabase-service status 来查看相应的状态
+EOF
+else
+ service_list=${SERVICE_LIST}
+fi
+
+
+if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
+  include_master="是"
+  datanodes="${DATANODES}"
+  secondary_namenode="${SECONDARY_NAMENODE}"
+fi
+
+show_service_operate "${operate}" "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
+if [ $? != 0 ];then
+  exit 1;
+fi
+
 if [ -n "${operate}" ]; then
   if [ "${operate}"x = "start"x ]; then
     operate_start "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
@@ -449,7 +398,6 @@ if [ -n "${operate}" ]; then
     if [ $? = 1 ];then
       exit 1
     fi
-
 
   elif [ "${operate}"x = "restart"x ]; then
     operate_stop "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"

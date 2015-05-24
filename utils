@@ -59,7 +59,6 @@ declare -A LXML_SOFT_DICT
 mysql_root_passwd=""
 
 
-
 HADOOP_RPM=hadoop-2.5.0+cdh5.3.0+781-1.cdh5.3.0.p0.54.el6.x86_64.rpm
 HADOOP_PKG=hadoop-2.5.0+cdh5.3.0+781-1.cdh5.3.0.p0.54.el6.x86_64
 HADOOP="hadoop"
@@ -434,6 +433,75 @@ configure_iptables_datanode()
 }
 
 
+# ntpd 服务不应该在安装的时候设置，而是在安装完成之后设置，即在config脚本中控制
+conf_ntpd_on_namenode()
+{
+  iecho "正在开启ntpd服务"
+
+  local ip=`ifconfig eth0 |grep 'inet addr' | cut -d: -f2 |cut -d' ' -f1`
+  if [ -z "${ip}" ];then
+   local ip=`ifconfig eth0 |grep 'inet 地址' | cut -d: -f2 |cut -d' ' -f1`
+   if [ -z "${ip}" ];then
+     wecho "无法取得本机eth0设备ip ntpd服务将无法工作"
+     return 1
+   fi
+  fi
+
+  local mask=`ifconfig eth0 |grep 'Mask' | cut -d: -f4`
+  if [ -z "${mask}" ];then
+   local mask=`ifconfig eth0 |grep '掩码' | cut -d: -f4`
+   if [ -z "${mask}" ];then
+     wecho "无法取得本机eth0设备掩码 ntpd服务将无法工作"
+     return 1
+   fi
+  fi
+
+  cp -f /etc/ntp.conf /etc/ntp.conf.esenbak
+  cp -f NTP_namenode.config /etc/ntp.conf
+  local start_addr=`python utils.py get_start_addr ${ip} ${mask}`
+  echo "restrict ${start_addr} mask ${mask} nomodify" >>/etc/ntp.conf
+
+  service ntpd start
+  chkconfig ntpd on
+}
+
+
+conf_ntpd_off_namenode()
+{
+  iecho "正在关闭ntpd服务"
+
+  cp -f /etc/ntp.conf.esenbak /etc/ntp.conf 
+  service ntpd stop
+  chkconfig ntpd off
+}
+
+
+conf_ntpdate_on_datanode()
+{ 
+ local master_host=`hostname`
+ local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+   echo "host is ${host}"
+   ssh "${host}"  "sed -i '/root ntpdate/'d  /etc/crontab"
+   ssh "${host}"  "echo \"* 0 * * * root ntpdate ${master_host}\" >> /etc/crontab"
+   ssh "${host}" "service ntpd stop"
+   ssh "${host}" "chkconfig ntpd off"
+  done
+}
+
+conf_ntpdate_off_datanode()
+{ 
+
+ local master_host=`hostname`
+ local _datanodes=$1
+  for host in ${_datanodes[@]}; do
+   echo "host is ${host}"
+   ssh "${host}"  "sed -i '/root ntpdate/'d  /etc/crontab"
+  done
+}
+
+
+
 
 fix_new_datanode_VERSION_file()
 {
@@ -702,12 +770,13 @@ check_and_install_hadoop_namenode()
    check_install_local ${HADOOP}
    if [ $? -eq 0 ]; then
      local installed_pkg_name=`rpm -q ${HADOOP}`
-     local pkgname= "${HADOOP_PKG}"
+     local pkgname="${HADOOP_PKG}"
      if [ ${installed_pkg_name}x = ${pkgname}x  ];then
        iecho "已经安装${installed_pkg_name}，不需要再次安装"
      else
-       wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-       exit 1
+       #wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+       #exit 1
+       wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
      fi
    else
      install_soft_local "${COMMON_SOFT_DIR}/${HADOOP_RPM}"
@@ -727,12 +796,13 @@ check_and_install_hadoop_datanode()
     check_install_remote ${host} ${HADOOP}
     if [ $? -eq 0 ]; then
       local installed_pkg_name=`ssh "${host}" "rpm -q ${HADOOP}"`
-      local pkgname= "${HADOOP_PKG}"
+      local pkgname="${HADOOP_PKG}"
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_remote ${host} "${COMMON_SOFT_DIR}/${HADOOP_RPM}"
@@ -755,8 +825,9 @@ check_and_install_namenode_from_rpm_list()
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_local ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
@@ -776,8 +847,9 @@ check_and_install_namenode_from_rpm_list()
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_local ${NAMENODE_SOFT_DIR}/${NAMENODE_SOFT_DICT[${key}]}
@@ -796,8 +868,9 @@ check_and_install_namenode_from_rpm_list()
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_local ${EXT_SOFT_DIR}/${EXT_SOFT_DICT[${key}]}
@@ -824,8 +897,9 @@ check_and_install_datanode_from_rpm_list()
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_remote ${host} ${COMMON_SOFT_DIR}/${COMMON_SOFT_DICT[${key}]}
@@ -844,8 +918,9 @@ check_and_install_datanode_from_rpm_list()
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "${host}已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "${host}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_remote ${host} ${DATANODE_SOFT_DIR}/${DATANODE_SOFT_DICT[${key}]}
@@ -872,8 +947,9 @@ check_and_install_secnamenode_from_rpm_list()
       if [ ${installed_pkg_name}x = ${pkgname}x  ];then
    	iecho "${_secondary_namenode}已经安装${installed_pkg_name}，不需要再次安装"
       else
-        wecho "${_secondary_namenode}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
-	exit 1
+        #wecho "${_secondary_namenode}已经安装了不同版本的包${installed_pkg_name},请卸载后重新执行本脚本"
+	#exit 1
+        wecho "已经安装了不同版本的包${installed_pkg_name},可能导致错误"
       fi
     else
       install_soft_remote ${_secondary_namenode} ${SEC_NAMENODE_SOFT_DIR}/${SEC_NAMENODE_SOFT_DICT[${key}]}
@@ -1458,6 +1534,7 @@ start_hive()
 {
   start_hive_local
   local ret=$?
+  sleep 2
   return ${ret}
 }
 

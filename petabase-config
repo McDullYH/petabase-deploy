@@ -55,9 +55,9 @@ exit 1
 config_arg_check()
 {
   if [ ${operate}x = ""x ];then
-    wecho "请指定一个操作类型 add-nodes/delete-nodes/eraser-nodes"
+    wecho "请指定一个操作类型 add-nodes/delete-nodes/eraser-nodes/use_ntp/unuse_ntp"
     return 1
-  elif [ ${operate}x != "add-nodes"x ] && [ ${operate}x != "delete-nodes"x ] && [ ${operate}x != "eraser-nodes"x ];then
+  elif [ ${operate}x != "add-nodes"x ] && [ ${operate}x != "delete-nodes"x ] && [ ${operate}x != "eraser-nodes"x ] && [ ${operate}x != "use_ntp"x ] && [ ${operate}x != "unuse_ntp"x ];then
     wecho "不支持的操作类型  '${operate}' "
     return 1
   fi
@@ -125,6 +125,13 @@ operate_add_nodes()
  sync_esen_software "${new_datanodes}"
 
  set_time_zone_datanode "${new_datanodes}"
+
+ use_ntp=`python xml-handle.py get use_ntp`
+ if [ use_ntp = "True" ];then
+  conf_ntpdate_on_datanode "${new_datanodes}"
+ else
+  conf_ntpdate_off_datanode "${new_datanodes}"
+ fi
 
  check_and_install_hadoop_datanode "${new_datanodes}"
 
@@ -210,6 +217,23 @@ operate_delete_nodes()
  start_hive
  start_petabase
 
+}
+
+operate_use_ntp()
+{
+  local _datanodes=$1
+  conf_ntpd_on_namenode
+  conf_ntpdate_on_datanode "${DATANODES}"
+  python xml-handle.py set use_ntp True
+}
+
+
+operate_unuse_ntp()
+{
+  local _datanodes=$1
+  conf_ntpd_off_namenode
+  conf_ntpdate_off_datanode "${DATANODES}"
+  python xml-handle.py set use_ntp False
 }
 
 
@@ -367,6 +391,19 @@ if [ -n "${operate}" ]; then
     if [ $? = 1 ];then
       exit 1
     fi
+
+  elif [ "${operate}"x = "use_ntp"x ]; then
+    operate_use_ntp
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
+  elif [ "${operate}"x = "unuse_ntp"x ]; then
+    operate_unuse_ntp 
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
   else
     echo "目前尚不支持 ${operate} 操作"
   fi
