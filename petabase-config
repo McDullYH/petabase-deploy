@@ -127,7 +127,7 @@ operate_add_nodes()
  set_time_zone_datanode "${new_datanodes}"
 
  use_ntp=`python xml-handle.py get use_ntp`
- if [ use_ntp = "True" ];then
+ if [ "${use_ntp}" = "True" ];then
   conf_ntpdate_on_datanode "${new_datanodes}"
  else
   conf_ntpdate_off_datanode "${new_datanodes}"

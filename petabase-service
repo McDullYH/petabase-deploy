@@ -357,22 +357,6 @@ fi
 
 test_connect_datanode "${datanodes}"
 
-if [[ -n "${service_list}" ]];then
-cat <<EOF
-petabse 4 个组件的启动是有依赖关系的，一般来说是zookeeper-->hadoop-->hive-->petabase的顺序
-
-即 如果hive相关没有正确启动，petabase服务是无法启动的(比如catalog)
-但 其中少许一些服务如(datanode)没有正确启动，又不会影响后面的服务
-
-总之
-如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service start 是最好的选择
-当然，如果您非常清楚他们之间的关系，登录到相应的机器进行控制也是非常好的选择
-
-建议您在执行本操作前，首先使用 ./petabase-service status 来查看相应的状态
-EOF
-else
- service_list=${SERVICE_LIST}
-fi
 
 
 if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include_master}" = "否" ]]; then
@@ -381,9 +365,32 @@ if [[ -z "${datanodes}" ]] && [[ -z "${secondary_namenode}" ]] && [[  "${include
   secondary_namenode="${SECONDARY_NAMENODE}"
 fi
 
-show_service_operate "${operate}" "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
-if [ $? != 0 ];then
-  exit 1;
+if [[ -n "${service_list}" ]];then
+ if [[ "${operate}" != "status" ]];then
+ cat <<EOF
+ petabse 4 个组件的启动是有依赖关系的，一般来说是zookeeper-->hadoop-->hive-->petabase的顺序
+ 
+ 即 如果hive相关没有正确启动，petabase服务是无法启动的(比如catalog)
+ 但 其中少许一些服务如(datanode)没有正确启动，又不会影响后面的服务
+ 
+ 总之
+ 如果不清楚他们之间的依赖关系，这里不建议您指定特定的服务进行控制 直接使用  ./petabase-service start 是最好的选择
+ 当然，如果您非常清楚他们之间的关系，登录到相应的机器进行控制也是非常好的选择
+ 
+ 建议您在执行本操作前，首先使用 ./petabase-service status 来查看相应的状态
+EOF
+ fi
+
+else
+ service_list=${SERVICE_LIST}
+fi
+
+
+if [[ "${operate}" != "status" ]];then
+ show_service_operate "${operate}" "${include_master}" "${datanodes}" "${secondary_namenode}" "${service_list}"
+ if [ $? != 0 ];then
+   exit 1;
+ fi
 fi
 
 if [ -n "${operate}" ]; then
