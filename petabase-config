@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 
 # 本脚本用于动态增删petabase集群中的所有DataNode，实现petabase集群的动态扩/减
 
@@ -6,10 +6,11 @@
 
 
 source ./utils
-construct_soft_dict
 
 CUSTOM_FILE=""
 in_datanodes=""
+
+pbwc_port=""
 
 HELP="flase"
 
@@ -23,6 +24,9 @@ show_usage(){
   add-nodes start  	To add a host in to current petabase cluster
   delete-nodes  	To move out a host from current petabase cluster
   eraser-nodes  	To move out a host from current petabase cluster and uninstall its petabase component
+  use-ntp		Use namenode to sync the timestamp
+  unuse-ntp		Use Internet server to sync the timestamp
+  change-pbwc-port	To change Petabase Web Console's port
 
   OPTIONS CAN BE:
 
@@ -46,6 +50,7 @@ show_usage(){
   e.g. $0 add-nodes -n esen-petabase-234,esen-petabase-235 
   e.g. $0 delete-nodes -f your_file
   e.g. $0 eraser-nodes -f your_file
+  e.g. $0 change-pbwc-port -p 8088
 
 EOF
 exit 1
@@ -55,9 +60,9 @@ exit 1
 config_arg_check()
 {
   if [ ${operate}x = ""x ];then
-    wecho "请指定一个操作类型 add-nodes/delete-nodes/eraser-nodes/use_ntp/unuse_ntp"
+    wecho "请指定一个操作类型 add-nodes/delete-nodes/eraser-nodes/use-ntp/unuse-ntp/change-pbwc-port"
     return 1
-  elif [ ${operate}x != "add-nodes"x ] && [ ${operate}x != "delete-nodes"x ] && [ ${operate}x != "eraser-nodes"x ] && [ ${operate}x != "use_ntp"x ] && [ ${operate}x != "unuse_ntp"x ];then
+  elif [ ${operate}x != "add-nodes"x ] && [ ${operate}x != "delete-nodes"x ] && [ ${operate}x != "eraser-nodes"x ] && [ ${operate}x != "use-ntp"x ] && [ ${operate}x != "unuse-ntp"x ] && [ ${operate}x != "change-pbwc-port"x ];then
     wecho "不支持的操作类型  '${operate}' "
     return 1
   fi
@@ -300,11 +305,9 @@ show_config_operate()
 
 ##########################################################################
 
-construct_host_info
-perm_check
 
 # first analsyse argument
-TEMP=`getopt -o n:f:hz:: -l nodes:,nodes-file:,help,z-long \
+TEMP=`getopt -o n:p:f:hz:: -l nodes:port:,nodes-file:,help,z-long \
      -n '错误的输入参数' -- "$@" `
 
 if [ $? != 0 ] ; then echo "您可以输入 $0 --help/-h 来查看帮助" >&2 ; exit 1 ; fi
@@ -338,6 +341,11 @@ while true ; do
 	 done  <${CUSTOM_FILE}
        shift 2 ;;
 
+     -p|--port) 
+       pbwc_port=$2;
+       #echo "Option $1's argument is $pbwc_port"; 
+       shift 2 ;;
+
      -h|--help)  
        HELP=true;  
        #echo "Option $1's argument is $HELP" ; 
@@ -360,6 +368,10 @@ if [ "${HELP}"x = "true"x ];then
   show_usage
   exit 0
 fi
+
+construct_host_info
+perm_check
+construct_soft_dict
 
 operate=${1}
 
@@ -392,14 +404,21 @@ if [ -n "${operate}" ]; then
       exit 1
     fi
 
-  elif [ "${operate}"x = "use_ntp"x ]; then
+  elif [ "${operate}"x = "use-ntp"x ]; then
     operate_use_ntp
     if [ $? = 1 ];then
       exit 1
     fi
 
-  elif [ "${operate}"x = "unuse_ntp"x ]; then
+  elif [ "${operate}"x = "unuse-ntp"x ]; then
     operate_unuse_ntp 
+    if [ $? = 1 ];then
+      exit 1
+    fi
+
+
+  elif [ "${operate}"x = "change-pbwc-port"x ]; then
+    change_pbwc_port  ${pbwc_port}
     if [ $? = 1 ];then
       exit 1
     fi

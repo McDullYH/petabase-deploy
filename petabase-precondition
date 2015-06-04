@@ -6,7 +6,6 @@
 
 # import temp variable and function
 source ./utils
-construct_soft_dict
 
 MASTER_HOST=`hostname`
 HELP=false
@@ -324,6 +323,8 @@ if [ "${HELP}" = "true" ];then
 show_usage
 exit 0
 fi
+
+construct_soft_dict
 
 
 arg_check

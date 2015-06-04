@@ -257,11 +257,10 @@ operate_status()
      status_secondary_namenode "${SECONDARY_NAMENODE}"
      status_hive 
      status_petabase
+     status_pbwc
 }
 ######################################################################################
 
-construct_host_info
-perm_check
 
 TEMP=`getopt -o n:d:s:f:mhyz:: -l nodes:,secondary-namenode:,nodes-file:,master,service:,help,yes,z-long \
      -n '错误的输入参数' -- "$@" `
@@ -346,6 +345,9 @@ if [ "${HELP}"x = "true"x ];then
   exit 0
 fi
 
+
+construct_host_info
+perm_check
 
 operate=${1}
 

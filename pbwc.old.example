@@ -1,0 +1,3 @@
+cd /root/workspace/PetaBaseWebConsole
+setsid /usr/java/jdk1.7.0_45/bin/java -jar -Xmx1024m -Dworkdir=/root/workspace/PetaBaseWebConsole/workdir -Dport=6060 start.jar &
+cd -

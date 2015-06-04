@@ -33,6 +33,8 @@ EXT_SOFT_DIR=$ESEN_PETA/ext-software
 MYSQL_SOFT_DIR=$ESEN_PETA/mysql-software
 LXML_SOFT_DIR=$ESEN_PETA/lxml-software
 CONFIGURATION_DIR=$ESEN_PETA/sbin/configuration.ripe
+PETABASE_WEB_CONSOLE_SRC_DIR=$ESEN_PETA/PetaBaseWebConsole.src
+PETABASE_WEB_CONSOLE_DIR=$ESEN_PETA/PetaBaseWebConsole
 
 
 # 依然是逗号号分割
@@ -274,6 +276,7 @@ clean_host_info()
   python xml-handle.py set namenode " "
   python xml-handle.py set datanodes " "
   python xml-handle.py set secondary-namenode  " "
+  python xml-handle.py set use_ntp False
 }
 
 
@@ -431,6 +434,99 @@ configure_iptables_datanode()
     ssh $host "chkconfig iptables off"
   done
 }
+
+# not ust now, bcs service cmd clean the env
+generate_pbwcd()
+{
+  sed  "s#M1 JPS=JPS#JPS=`which jps`#g" pbwcd.tmpl >pbwcd
+  sed -i "s#M2 -Dworkdir=workdir#-Dworkdir=${PETABASE_WEB_CONSOLE_DIR}/workdir#g" pbwcd
+
+  chmod u+x pbwcd
+  cp -f pbwcd /etc/init.d/
+  #rm pbwcd
+}
+
+change_pbwc_port()
+{
+  generate_pbwc $1
+}
+
+generate_pbwc()
+{
+  local _port=$1
+  sed  "s#M2 -Dworkdir=workdir#-Dworkdir=${PETABASE_WEB_CONSOLE_DIR}/workdir#g" pbwc.tmpl >pbwc
+  sed -i "s#M3 -Dport=port#-Dport=${_port}#g" pbwc
+  sed -i "s#M4 cd=cd#cd ${PETABASE_WEB_CONSOLE_DIR}#g" pbwc
+  chmod u+x pbwc
+  cp -f pbwc /usr/sbin/
+  #rm pbwc
+}
+
+
+change_petabase_web_console_port()
+{
+  generate_pbwc $1
+}
+
+
+# install more like conf
+install_petabase_web_console()
+{
+
+ cp -vr ${PETABASE_WEB_CONSOLE_SRC_DIR} ${PETABASE_WEB_CONSOLE_DIR}  
+
+ echo -e "\nhadoop.cluster.master.url=hdfs://`hostname`:8020" >> "${PETABASE_WEB_CONSOLE_DIR}/PetaBase/WEB-INF/classes/config/overwrite/server_config.properties"
+ echo "petabase.database.jdbc.url=jdbc:petabase://${SECONDARY_NAMENODE}:21050/;auth=noSasl" >> "${PETABASE_WEB_CONSOLE_DIR}/PetaBase/WEB-INF/classes/config/overwrite/server_config.properties"
+ #echo "uername=XXX" >> PetaBaseWebConsole/workdir/conf/jdbc.conf
+ echo "password=${mysql_root_passwd}" >> "${PETABASE_WEB_CONSOLE_DIR}/workdir/conf/jdbc.conf"
+ mysql --user=root --password="${mysql_root_passwd}" --execute='CREATE DATABASE `petabase` DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci;' 1>/dev/null 2>&1
+ 
+
+ # add root to hadoop group
+ usermod -a -G hadoop root
+
+ generate_pbwc 6060
+ echo "pbwc start" >>/etc/rc.local
+ #generate_pbwcd
+ #chkconfig --add pbwcd
+ #chkconfig pbwcd on
+}
+
+uninstall_petabase_web_console()
+{
+  #chkconfig pbwcd off
+  #chkconfig --del pbwcd
+  #rm -f pbwcd /etc/init.d/pbwcd
+  rm -f pbwc /usr/sbin/pbwc
+  rm -rf ${PETABASE_WEB_CONSOLE_DIR}
+  mysql --user=root --password="${mysql_root_passwd}" --execute='drop database petabase;' 1>/dev/null 2>&1
+  sed -i '/pbwc start/'d /etc/rc.local
+}
+
+
+start_pbwc()
+{
+  pbwc start
+}
+
+stop_pbwc()
+{
+  pbwc stop 1>/dev/null 2>&1
+}
+
+status_pbwc()
+{
+  pbwc status 1>/dev/null 2>&1
+
+  local ret=$?
+  if [ ${ret} -ne 0 ];then
+    wecho "PetaBase Web Console 服务未启动"
+  else
+    echo "PetaBase Web Console 服务已启动"
+  fi
+  return ${ret}
+}
+
 
 
 # ntpd 服务不应该在安装的时候设置，而是在安装完成之后设置，即在config脚本中控制
@@ -881,6 +977,11 @@ check_and_install_namenode_from_rpm_list()
     fi
   done
 
+
+  # must set JAVA_HOME because need use jps
+  cat $COMMON_SOFT_DIR/java_env  >> /etc/profile;
+  source /etc/profile;
+
   return 0
 }
 
@@ -930,6 +1031,10 @@ check_and_install_datanode_from_rpm_list()
       fi
     fi
   done
+
+ ssh   $host  "cat $COMMON_SOFT_DIR/java_env  >> /etc/profile"
+ ssh   $host  "source /etc/profile"
+
  done
  return 0
 }
@@ -985,6 +1090,13 @@ uninstall_namenode_from_rpm_list()
     uninstall_soft_local ${key}
   done
   rm -rf /var/lib/zookeeper
+
+
+  sed -i '/export JAVA_HOME=/'d /etc/profile
+  sed -i '/export JRE_HOME=/'d /etc/profile
+  sed -i '/export CLASSPATH=/'d /etc/profile
+  sed -i '/export PATH=/'d /etc/profile
+
   return 0
 }
 
@@ -1014,6 +1126,12 @@ uninstall_datanode_from_rpm_list()
   done
 
   ssh "${host}" "rm -rf /var/lib/zookeeper"
+
+  ssh  $host "sed -i '/export JAVA_HOME=/'d /etc/profile"
+  ssh  $host "sed -i '/export JRE_HOME=/'d /etc/profile"
+  ssh  $host "sed -i '/export CLASSPATH=/'d /etc/profile" 
+  ssh  $host "sed -i '/export PATH=/'d /etc/profile" 
+
  done
  return 0
 }

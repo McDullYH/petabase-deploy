@@ -13,3 +13,4 @@ configuration.tmp
 *.pyc
 
 host.info
+host-info.xml

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+
 # TODO 先安装MapReduce V1  后期 进行YARN的安装
 # TODO 安装完成之后是否需要生成一个文件，记录哪些是namenode，哪些是datanode等等，方便后期控制脚本操作
 
@@ -28,7 +29,6 @@
 
 # import temp variable
 source ./utils
-construct_soft_dict
 
 
 # 用户输入
@@ -684,8 +684,6 @@ option_arg_check()
 
 ######################################################################################
 
-construct_host_info
-perm_check
 
 TEMP=`getopt -o n:s:f:hz:: -l nodes:,secondary-namenode:,nodes-file:,help,z-long \
      -n '错误的输入参数' -- "$@" `
@@ -754,6 +752,10 @@ if [ "${HELP}"x = "true"x ];then
   exit 0
 fi
 
+construct_host_info
+perm_check
+construct_soft_dict
+
 operate=${1}
 
 command_arg_check
@@ -769,6 +771,9 @@ if [ ${operate}x = "install"x ];then
   show_deploy_operate "install" "${datanodes}" "${secondary_namenode}"
 
   option_arg_check
+  if [ $? = 1 ];then
+    exit 1
+  fi
 
   check_namenode_user-group
   check_datanode_user-group "${datanodes}"
@@ -790,6 +795,8 @@ if [ ${operate}x = "install"x ];then
   generate_host_info "${datanodes}" "${secondary_namenode}"
 
   construct_host_info
+
+  install_petabase_web_console
 
 
   # 实际上就是generate_host_info里面的内容，这里只是为了使用 start_xxx
@@ -840,13 +847,18 @@ if [ ${operate}x = "install"x ];then
   init_hive
   start_hive
   start_petabase
+   
+  start_pbwc
 
 elif [ ${operate}x = "uninstall"x ];then
 
   show_deploy_operate "uninstall" "${DATANODES}" "${SECONDARY_NAMENODE}"
 
+  get_mysql_root_passwd
+
   iecho "`date +%Y%m%d-%T` 开始卸载"
 
+   stop_pbwc
   # first stop all service
   ./petabase-service stop -y
   if [ $? = 1 ];then
@@ -864,6 +876,8 @@ elif [ ${operate}x = "uninstall"x ];then
   uninstall_hadoop_namenode
   uninstall_hadoop_datanode "${DATANODES}"
 
+  uninstall_petabase_web_console
+
   clean_host_info
 
   #uninstall_soft_namenode
@@ -871,6 +885,10 @@ elif [ ${operate}x = "uninstall"x ];then
   #uninstall_soft_secondarynamenode
 
 elif [ ${operate}x = "status"x ];then
+  option_arg_check
+  if [ $? = 1 ];then
+    exit 1
+  fi
   iecho "`date +%Y%m%d-%T` 开始检查安装环境..."
   check_soft_namenode
   check_soft_datanodes "${datanodes}"

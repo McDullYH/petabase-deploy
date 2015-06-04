@@ -147,7 +147,7 @@ HOSTNAME=last-235
 确定无误之后
 
 1. 在3台主机上面均执行 yum install -y redhat-lsb
-2. 拷贝zip包到last-233，并解压
+2. 拷贝tar包到last-233，并解压
 3. 在last-233上面运行 ./petabase-precondition -n last-234,last-235
 4. 在last-233上面运行 ./petabase-deploy install -n last-234,last-235 -s last-234
 至此，petabase集群安装完成
